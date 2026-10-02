@@ -21,7 +21,7 @@ _PACKAGES_PREFIX = "node_modules/"
 
 
 class InputError(Exception):
-    """锁文件不可读、JSON 损坏或结构不受支持。"""
+    """锁文件不可读、不是合法 UTF-8、JSON 损坏或结构不受支持。"""
 
 
 class NotFoundError(Exception):
@@ -74,6 +74,10 @@ def load_lockfile(path):
             text = handle.read()
     except OSError as exc:
         raise InputError("cannot read lockfile") from exc
+    except UnicodeDecodeError as exc:
+        # 文件可读但不是合法 UTF-8：严格模式下整份输入作废，
+        # 不得忽略、替换坏字节或猜测其他编码后继续解析。
+        raise InputError("lockfile is not valid UTF-8") from exc
 
     try:
         data = json.loads(text)
