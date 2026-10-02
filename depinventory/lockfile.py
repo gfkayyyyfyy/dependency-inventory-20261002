@@ -14,6 +14,7 @@
 """
 
 import json
+from collections import deque
 
 ROOT = "$root"
 _ROOT_KEY = ""
@@ -180,27 +181,48 @@ def find_path(root_deps, packages_map, target):
     """返回从 $root 到 target 的最短包名路径；不可达返回 []。
 
     包不存在抛 NotFoundError。同长度路径按包名序列的 Unicode 码点字典序
-    取第一条；用 visited 集合保证循环依赖不会导致无限遍历。
+    取第一条；循环依赖由 parent 表保证每个节点只处理一次。
+
+    除根直依赖排序与命中后的路径重建外，单次查询时间 O(V+E)、辅助存储
+    O(V)：parent 只记录每个节点首次（即最短、字典序最小）被发现时的
+    前驱，队列不携带路径副本，且出队为 O(1)。不修改 root_deps、
+    packages_map 及其内的 deps 列表。
     """
     if target not in packages_map:
         raise NotFoundError(target)
 
-    sorted_root_deps = sorted(root_deps)
-    # BFS：每个节点只需处理一次；邻居按名称排序，使字典序最小的路径先到达。
-    visited = set()
-    queue = []
-    for name in sorted_root_deps:
-        if name not in visited:
-            visited.add(name)
-            queue.append((name, [ROOT, name]))
+    # parent[node] 记录首次发现 node 的前驱；根直依赖的前驱为 None。
+    # 用 None 而非 ROOT 字符串作哨兵，避免与同名包 "$root" 混淆。
+    # 同一节点只保留第一次命中：BFS 按层扩展，每一层的入队顺序即
+    # “到达该层节点的完整包名序列”的字典序（父路径严格有序，子列表
+    # 排序后扩展相同后缀保序），故首次命中就是最短且字典序最小的路径。
+    parent = {}
+    queue = deque()
+    for name in sorted(root_deps):
+        if name not in parent:
+            parent[name] = None
+            queue.append(name)
 
+    found = False
     while queue:
-        node, path = queue.pop(0)
+        node = queue.popleft()
         if node == target:
-            return path
+            found = True
+            break
         for dep in sorted(packages_map[node]["deps"]):
-            if dep in visited:
-                continue
-            visited.add(dep)
-            queue.append((dep, path + [dep]))
-    return []
+            if dep not in parent:
+                parent[dep] = node
+                queue.append(dep)
+
+    if not found:
+        return []
+
+    # 仅对命中的目标做一次回溯重建，长度等于路径边数，总量仍为 O(V)。
+    path = [target]
+    predecessor = parent[target]
+    while predecessor is not None:
+        path.append(predecessor)
+        predecessor = parent[predecessor]
+    path.append(ROOT)
+    path.reverse()
+    return path
