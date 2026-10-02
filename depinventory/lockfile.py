@@ -177,28 +177,24 @@ def diff_items(before_map, after_map):
     return records
 
 
-def find_path(root_deps, packages_map, target):
-    """返回从 $root 到 target 的最短包名路径；不可达返回 []。
+def _shortest_path(starts, packages_map, target):
+    """自给定起点集合 BFS 到 target，返回起点→目标的最短包名路径。
 
-    包不存在抛 NotFoundError。同长度路径按包名序列的 Unicode 码点字典序
-    取第一条；循环依赖由 parent 表保证每个节点只处理一次。
+    starts 须已按字典序排好；不可达返回 []。
 
-    除根直依赖排序与命中后的路径重建外，单次查询时间 O(V+E)、辅助存储
-    O(V)：parent 只记录每个节点首次（即最短、字典序最小）被发现时的
-    前驱，队列不携带路径副本，且出队为 O(1)。不修改 root_deps、
-    packages_map 及其内的 deps 列表。
+    parent[node] 记录首次发现 node 的前驱；起点的前驱为 None。
+    同一节点只保留第一次命中：BFS 按层扩展，每一层的入队顺序即
+    “到达该层节点的完整包名序列”的字典序（父路径严格有序，子列表
+    排序后扩展相同后缀保序），故首次命中就是最短且字典序最小的路径。
+    循环依赖与自环由 parent 表保证每个节点只处理一次。
+
+    除起点排序与命中后的路径重建外，单次查询时间 O(V+E)、辅助存储
+    O(V)：parent 只记录每个节点首次被发现时的前驱，队列不携带路径
+    副本，且出队为 O(1)。不修改 packages_map 及其内的 deps 列表。
     """
-    if target not in packages_map:
-        raise NotFoundError(target)
-
-    # parent[node] 记录首次发现 node 的前驱；根直依赖的前驱为 None。
-    # 用 None 而非 ROOT 字符串作哨兵，避免与同名包 "$root" 混淆。
-    # 同一节点只保留第一次命中：BFS 按层扩展，每一层的入队顺序即
-    # “到达该层节点的完整包名序列”的字典序（父路径严格有序，子列表
-    # 排序后扩展相同后缀保序），故首次命中就是最短且字典序最小的路径。
     parent = {}
     queue = deque()
-    for name in sorted(root_deps):
+    for name in starts:
         if name not in parent:
             parent[name] = None
             queue.append(name)
@@ -223,6 +219,38 @@ def find_path(root_deps, packages_map, target):
     while predecessor is not None:
         path.append(predecessor)
         predecessor = parent[predecessor]
-    path.append(ROOT)
     path.reverse()
     return path
+
+
+def find_path(root_deps, packages_map, target, source=None):
+    """返回到 target 的最短包名路径；不可达返回 []。
+
+    target 不存在抛 NotFoundError。同长度路径按包名序列的 Unicode 码点
+    字典序取第一条；结果不受条目或依赖声明顺序影响。
+
+    source 为 None（默认）时自虚拟根 $root 查起：路径以 ROOT 标记开始，
+    语义与省略 --from 的 why 查询一致。source 给定时以该已安装包为唯一
+    起点：路径从 source 开始、到 target 结束，不添加根标记；source 是否
+    能从根节点到达不作要求，一律沿其自身 dependencies 查询。source 的
+    字面值没有任何特殊含义，"$root" 也按普通包名查找。source 未安装同样
+    抛 NotFoundError。source == target 时返回仅含该包名的路径，不要求存在
+    自环；两包均已安装但 source 不可达 target 时返回 []。
+
+    不修改 root_deps、packages_map 及其内的 deps 列表。
+    """
+    if target not in packages_map:
+        raise NotFoundError(target)
+    if source is None:
+        starts = sorted(root_deps)
+        path = _shortest_path(starts, packages_map, target)
+        if not path:
+            return []
+        # 虚拟根不作为图节点参与 BFS，仅在重建出的路径前补上根标记。
+        return [ROOT] + path
+
+    if source not in packages_map:
+        raise NotFoundError(source)
+    # 单起点无需排序；source == target 时首次出队即命中，返回 [source]，
+    # 不依赖自环。
+    return _shortest_path([source], packages_map, target)

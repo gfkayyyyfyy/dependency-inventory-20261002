@@ -14,6 +14,9 @@ python -m depinventory list demo-lock.json
 # 查询某包自根节点的最短依赖来源路径（区分大小写的完整包名）
 python -m depinventory why demo-lock.json beta
 
+# 以指定已安装包为起点，查询它到目标包之间的最短路径
+python -m depinventory why demo-lock.json beta --from alpha
+
 # 比较两份清单的版本差异（参数顺序决定方向：旧清单在前）
 python -m depinventory diff demo-lock.json new-lock.json
 ```
@@ -24,6 +27,13 @@ python -m depinventory diff demo-lock.json new-lock.json
 `why` 输出仅含 `name` 和 `path` 的 JSON 对象；`path` 为从 `$root` 到目标的
 包名数组，取边数最少的路径，同长度按包名序列的 Unicode 码点字典序取第一条。
 包已安装但根节点不可达时输出空路径 `[]`。
+
+带 `--from 包名` 时改以该已安装包为查询起点：`path` 从起点包开始、到目标包
+结束，不含 `$root` 标记；起点即使不能从根项目到达也沿其自身依赖查询。起点与
+目标相同返回只含该包名的数组；两包均已安装但起点无法到达目标时返回 `[]`。
+起点与目标都按区分大小写的完整已安装包名匹配（支持 `@scope/name`），
+`--from` 的字面值始终表示安装包，`$root` 也按普通包名查找，不是虚拟根别名；
+起点或目标未安装时以 `NOT_FOUND` 失败。
 
 `diff` 输出 JSON 数组，每项仅含 `name`、`change`、`before`、`after`。
 比较两份清单的全部已安装条目（含根节点不可达的包，不含根项目）：
@@ -65,6 +75,10 @@ $ python -m depinventory list demo-lock.json
 [{"name": "alpha", "version": "1.0.0", "direct": true}, {"name": "beta", "version": "2.0.0", "direct": false}]
 $ python -m depinventory why demo-lock.json beta
 {"name": "beta", "path": ["$root", "alpha", "beta"]}
+$ python -m depinventory why demo-lock.json beta --from alpha
+{"name": "beta", "path": ["alpha", "beta"]}
+$ python -m depinventory why demo-lock.json alpha --from beta
+{"name": "alpha", "path": []}
 $ python -m depinventory diff demo-lock.json new-lock.json
 [{"name": "alpha", "change": "removed", "before": "1.0.0", "after": null}, {"name": "beta", "change": "changed", "before": "2.0.0", "after": "2.1.0"}, {"name": "gamma", "change": "added", "before": null, "after": "3.0.0"}]
 ```

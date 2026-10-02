@@ -27,9 +27,19 @@ def _build_parser():
     list_parser = subparsers.add_parser("list", help="列出全部已安装条目")
     list_parser.add_argument("lockfile", help="package-lock.json 路径")
 
-    why_parser = subparsers.add_parser("why", help="查询某包自根节点的最短依赖路径")
+    why_parser = subparsers.add_parser(
+        "why", help="查询目标包自根节点（或指定起点包）的最短依赖路径"
+    )
     why_parser.add_argument("lockfile", help="package-lock.json 路径")
     why_parser.add_argument("name", help="按区分大小写的完整包名查询")
+    why_parser.add_argument(
+        "--from",
+        dest="source",
+        metavar="包名",
+        default=None,
+        help="以指定已安装包为查询起点；省略时自根节点 $root 查起。"
+        "按区分大小写的完整包名匹配，字面值 $root 仍按普通包名查找。",
+    )
 
     diff_parser = subparsers.add_parser("diff", help="比较两份清单的版本差异")
     diff_parser.add_argument("before", help="旧清单 package-lock.json 路径")
@@ -62,7 +72,7 @@ def main(argv=None):
         elif args.command == "diff":
             result = diff_items(before_map, after_map)
         else:
-            path = find_path(root_deps, packages_map, args.name)
+            path = find_path(root_deps, packages_map, args.name, args.source)
             result = {"name": args.name, "path": path}
     except NotFoundError:
         print(_NOT_FOUND, file=sys.stderr)
