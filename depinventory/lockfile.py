@@ -14,6 +14,7 @@
 """
 
 import json
+from collections import deque
 
 ROOT = "$root"
 _ROOT_KEY = ""
@@ -180,27 +181,43 @@ def find_path(root_deps, packages_map, target):
     """返回从 $root 到 target 的最短包名路径；不可达返回 []。
 
     包不存在抛 NotFoundError。同长度路径按包名序列的 Unicode 码点字典序
-    取第一条；用 visited 集合保证循环依赖不会导致无限遍历。
+    取第一条；循环依赖不会导致无限遍历。
+
+    单次查询为 O(V+E)（不含名称排序与最终路径输出）：每个可达节点入队一次，
+    deque 的头尾操作为 O(1)；parent 前驱表同时充当 visited 集合，只存一个
+    前驱指针而非逐节点复制路径，辅助存储为 O(V)。入队顺序（根依赖排序后按序
+    入队、每个节点的依赖排序后按序扩展、首次到达即定前驱）与遍历次序决定
+    字典序最小的最短路径：目标首次入队时其前驱链即为答案，回溯反转即可。
     """
     if target not in packages_map:
         raise NotFoundError(target)
 
-    sorted_root_deps = sorted(root_deps)
-    # BFS：每个节点只需处理一次；邻居按名称排序，使字典序最小的路径先到达。
-    visited = set()
-    queue = []
-    for name in sorted_root_deps:
-        if name not in visited:
-            visited.add(name)
-            queue.append((name, [ROOT, name]))
+    # parent[node] 是节点在最短路径上的前驱；根直依的前驱为 ROOT。
+    # 该表同时充当 visited：键存在即已入队，循环边不会重复入队。
+    parent = {}
+    queue = deque()
+    for name in sorted(root_deps):
+        if name not in parent:
+            parent[name] = ROOT
+            queue.append(name)
 
     while queue:
-        node, path = queue.pop(0)
+        node = queue.popleft()
         if node == target:
-            return path
+            break
         for dep in sorted(packages_map[node]["deps"]):
-            if dep in visited:
-                continue
-            visited.add(dep)
-            queue.append((dep, path + [dep]))
-    return []
+            if dep not in parent:
+                parent[dep] = node
+                queue.append(dep)
+    else:
+        # 队列为空仍未遇到 target：已安装但根节点不可达。
+        return []
+
+    # 沿前驱链回溯一次，长度等于路径边数；整体 O(V) 而非逐节点复制路径。
+    path = [target]
+    node = target
+    while node in parent:
+        node = parent[node]
+        path.append(node)
+    path.reverse()
+    return path
