@@ -51,10 +51,11 @@ def _entry_name(key):
 
 
 def _validate_dependencies(node, present_names):
-    deps = node.get("dependencies")
-    if deps is None:
+    if "dependencies" not in node:
         return
+    deps = node["dependencies"]
     if not isinstance(deps, dict):
+        # 显式 null 与数组、字符串、数字、布尔值一样不符合约定。
         raise InputError("dependencies must be an object")
     for dep_name, spec in deps.items():
         if not isinstance(dep_name, str) or not isinstance(spec, str):
