@@ -1,4 +1,4 @@
-"""命令行入口：python -m depinventory list|why|diff <lockfile> [参数]。"""
+"""命令行入口：python -m depinventory list|why|diff|sbom <lockfile> [参数]。"""
 
 import argparse
 import json
@@ -11,6 +11,7 @@ from .lockfile import (
     find_path,
     list_items,
     load_lockfile,
+    sbom_document,
 )
 
 _INPUT_ERROR = "INPUT_ERROR"
@@ -45,6 +46,11 @@ def _build_parser():
     diff_parser.add_argument("before", help="旧清单 package-lock.json 路径")
     diff_parser.add_argument("after", help="新清单 package-lock.json 路径")
 
+    sbom_parser = subparsers.add_parser(
+        "sbom", help="导出简化 SBOM（产品自有格式，非标准 SBOM）"
+    )
+    sbom_parser.add_argument("lockfile", help="package-lock.json 路径")
+
     return parser
 
 
@@ -69,6 +75,8 @@ def main(argv=None):
     try:
         if args.command == "list":
             result = list_items(root_deps, packages_map)
+        elif args.command == "sbom":
+            result = sbom_document(root_deps, packages_map)
         elif args.command == "diff":
             result = diff_items(before_map, after_map)
         else:

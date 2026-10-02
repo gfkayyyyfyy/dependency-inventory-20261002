@@ -146,6 +146,36 @@ def list_items(root_deps, packages_map):
     ]
 
 
+def sbom_document(root_deps, packages_map):
+    """生成简化 SBOM 文档（产品自有格式，不声明符合其他 SBOM 标准）。
+
+    顶层仅含 format、formatVersion、components。components 覆盖全部已安装
+    包（不含根项目），根节点不可达的包同样保留；按完整包名 Unicode 码点
+    升序排列，每个包名只出现一次。名称与版本字符串原样保留；direct 仅
+    表示根节点 dependencies 是否声明该包，与其他包的依赖关系无关。
+    许可证与安全元数据本轮不解读，license、securityStatus 固定为
+    "unknown"，未知不代表没有风险，也不根据版本推断安全结论。
+    循环依赖不影响结果：组件来自 packages_map 本身，天然不重复。
+    """
+    direct = set(root_deps)
+    components = [
+        {
+            "name": name,
+            "version": packages_map[name]["version"],
+            "ecosystem": "npm",
+            "direct": name in direct,
+            "license": "unknown",
+            "securityStatus": "unknown",
+        }
+        for name in sorted(packages_map.keys())
+    ]
+    return {
+        "format": "depinventory-sbom",
+        "formatVersion": 1,
+        "components": components,
+    }
+
+
 def diff_items(before_map, after_map):
     """比较两份清单的已安装条目（不含根节点），返回版本差异记录。
 
