@@ -1,0 +1,24 @@
+{
+  "name": "depinventory-demo",
+  "version": "1.0.0",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "depinventory-demo",
+      "version": "1.0.0",
+      "dependencies": {
+        "alpha": "1.0.0"
+      }
+    },
+    "node_modules/alpha": {
+      "version": "1.0.0",
+      "dependencies": {
+        "beta": "2.0.0"
+      }
+    },
+    "node_modules/beta": {
+      "version": "2.0.0"
+    }
+  }
+}
