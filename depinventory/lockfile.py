@@ -226,3 +226,51 @@ def find_path(root_deps, packages_map, target):
     path.append(ROOT)
     path.reverse()
     return path
+
+
+def find_path_from(packages_map, source, target):
+    """返回从已安装包 source 到 target 的最短包名路径；不可达返回 []。
+
+    source 与 target 都按区分大小写的完整包名匹配，任一包不存在都抛
+    NotFoundError。source 只作为遍历起点，不要求它能从根节点到达；
+    字面值 "$root" 也按普通包名查找，不作虚拟根别名。路径从 source
+    开始、到 target 结束，不含根标记；source 与 target 相同即返回
+    [source]，不要求存在自环。
+
+    选路规则与 find_path 一致：边数最少，同长度按完整包名序列的
+    Unicode 码点字典序取第一条，结果不受条目或依赖声明顺序影响；
+    parent 表保证循环与自环下每个节点只处理一次。单次查询时间
+    O(V+E)、辅助存储 O(V)，不修改 packages_map 及其内的 deps 列表。
+    """
+    if source not in packages_map:
+        raise NotFoundError(source)
+    if target not in packages_map:
+        raise NotFoundError(target)
+
+    # 与 find_path 相同的 BFS：起点入队即第 0 层，sorted 扩展保证
+    # 首次命中目标时的路径最短且字典序最小。source == target 时
+    # 首次出队即命中，parent[source] 为 None，重建结果即 [source]。
+    parent = {source: None}
+    queue = deque([source])
+
+    found = False
+    while queue:
+        node = queue.popleft()
+        if node == target:
+            found = True
+            break
+        for dep in sorted(packages_map[node]["deps"]):
+            if dep not in parent:
+                parent[dep] = node
+                queue.append(dep)
+
+    if not found:
+        return []
+
+    path = [target]
+    predecessor = parent[target]
+    while predecessor is not None:
+        path.append(predecessor)
+        predecessor = parent[predecessor]
+    path.reverse()
+    return path

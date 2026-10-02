@@ -6,6 +6,7 @@ from .lockfile import (
     NotFoundError,
     diff_items,
     find_path,
+    find_path_from,
     list_items,
     load_lockfile,
 )
@@ -16,6 +17,7 @@ __all__ = [
     "NotFoundError",
     "diff_items",
     "find_path",
+    "find_path_from",
     "list_items",
     "load_lockfile",
 ]

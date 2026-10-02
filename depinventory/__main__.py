@@ -9,6 +9,7 @@ from .lockfile import (
     NotFoundError,
     diff_items,
     find_path,
+    find_path_from,
     list_items,
     load_lockfile,
 )
@@ -30,6 +31,13 @@ def _build_parser():
     why_parser = subparsers.add_parser("why", help="查询某包自根节点的最短依赖路径")
     why_parser.add_argument("lockfile", help="package-lock.json 路径")
     why_parser.add_argument("name", help="按区分大小写的完整包名查询")
+    why_parser.add_argument(
+        "--from",
+        dest="from_package",
+        metavar="PACKAGE",
+        default=None,
+        help="改从指定已安装包查询到目标的最短路径（省略时仍从根节点查询）",
+    )
 
     diff_parser = subparsers.add_parser("diff", help="比较两份清单的版本差异")
     diff_parser.add_argument("before", help="旧清单 package-lock.json 路径")
@@ -62,7 +70,10 @@ def main(argv=None):
         elif args.command == "diff":
             result = diff_items(before_map, after_map)
         else:
-            path = find_path(root_deps, packages_map, args.name)
+            if args.from_package is None:
+                path = find_path(root_deps, packages_map, args.name)
+            else:
+                path = find_path_from(packages_map, args.from_package, args.name)
             result = {"name": args.name, "path": path}
     except NotFoundError:
         print(_NOT_FOUND, file=sys.stderr)
