@@ -13,6 +13,9 @@ python -m depinventory list demo-lock.json
 
 # 查询某包自根节点的最短依赖来源路径（区分大小写的完整包名）
 python -m depinventory why demo-lock.json beta
+
+# 比较两份锁文件的版本差异（参数顺序决定方向：before → after）
+python -m depinventory diff demo-lock.json new-lock.json
 ```
 
 `list` 向标准输出写 JSON 数组，每项仅含 `name`、`version`、`direct`
@@ -21,6 +24,13 @@ python -m depinventory why demo-lock.json beta
 `why` 输出仅含 `name` 和 `path` 的 JSON 对象；`path` 为从 `$root` 到目标的
 包名数组，取边数最少的路径，同长度按包名序列的 Unicode 码点字典序取第一条。
 包已安装但根节点不可达时输出空路径 `[]`。
+
+`diff` 比较两份清单的全部安装条目（含根节点不可达的包，不含根项目本身），
+输出 JSON 数组，每项仅含 `name`、`change`、`before`、`after`：仅新清单存在
+记 `added`（`before` 为 `null`），仅旧清单存在记 `removed`（`after` 为
+`null`），两边版本字符串不同记 `changed`。记录按包名 Unicode 码点升序排列，
+每个包最多出现一次；版本完全相同的包不输出，依赖声明、直接或间接身份及
+其他元数据变化不产生记录。同一文件与自身比较或两边均只有根节点时输出 `[]`。
 
 ## 支持范围
 
@@ -38,9 +48,9 @@ python -m depinventory why demo-lock.json beta
 | --- | --- | --- |
 | 0 | 成功 | — |
 | 1 | 查询的包不存在（`why`） | `NOT_FOUND` |
-| 2 | 输入错误（文件不可读、JSON 损坏、结构/版本字段无效、悬空依赖、不支持的结构） | `INPUT_ERROR` |
+| 2 | 输入错误（任一文件不可读、JSON 损坏、结构/版本字段无效、悬空依赖、不支持的结构） | `INPUT_ERROR` |
 
-失败时标准输出为空，不输出部分清单或堆栈。
+失败时标准输出为空，不输出部分清单、部分报告或堆栈。
 
 ## 样例
 
@@ -55,3 +65,11 @@ $ python -m depinventory why demo-lock.json beta
 ```
 
 `why beta` 的 `path` 为 `["$root", "alpha", "beta"]`。
+
+`new-lock.json` 为 `diff` 演示清单：根依赖改为 `beta@2.1.0`，移除 `alpha`，
+加入未被引用的 `gamma@3.0.0`。
+
+```sh
+$ python -m depinventory diff demo-lock.json new-lock.json
+[{"name": "alpha", "change": "removed", "before": "1.0.0", "after": null}, {"name": "beta", "change": "changed", "before": "2.0.0", "after": "2.1.0"}, {"name": "gamma", "change": "added", "before": null, "after": "3.0.0"}]
+```

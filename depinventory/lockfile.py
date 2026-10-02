@@ -145,6 +145,29 @@ def list_items(root_deps, packages_map):
     ]
 
 
+def diff_items(before_map, after_map):
+    """比较两份清单的全部安装条目（不含根节点），返回版本差异记录。
+
+    仅新清单存在记 added（before 为 None），仅旧清单存在记 removed
+    （after 为 None），两边版本字符串不同记 changed；版本一致的不输出。
+    记录按包名 Unicode 码点升序排列，每项仅含 name、change、before、after。
+    """
+    changes = []
+    for name in sorted(set(before_map) | set(after_map)):
+        before = before_map.get(name)
+        after = after_map.get(name)
+        if before is None:
+            changes.append({"name": name, "change": "added",
+                            "before": None, "after": after["version"]})
+        elif after is None:
+            changes.append({"name": name, "change": "removed",
+                            "before": before["version"], "after": None})
+        elif before["version"] != after["version"]:
+            changes.append({"name": name, "change": "changed",
+                            "before": before["version"], "after": after["version"]})
+    return changes
+
+
 def find_path(root_deps, packages_map, target):
     """返回从 $root 到 target 的最短包名路径；不可达返回 []。
 
