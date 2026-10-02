@@ -74,6 +74,10 @@ def load_lockfile(path):
             text = handle.read()
     except OSError as exc:
         raise InputError("cannot read lockfile") from exc
+    except UnicodeDecodeError as exc:
+        # 文件只按 UTF-8 读取；任何位置出现非法字节都视为输入损坏，
+        # 不做忽略、替换或编码猜测。
+        raise InputError("lockfile is not valid UTF-8") from exc
 
     try:
         data = json.loads(text)
