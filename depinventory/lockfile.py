@@ -160,7 +160,7 @@ def list_items(root_deps, packages_map):
     ]
 
 
-def _reachable_names(root_deps, packages_map):
+def reachable_names(root_deps, packages_map):
     """返回自根节点沿 dependencies 可达的包名集合（不含根节点）。
 
     可达性只看 dependencies 声明的包名连边，不解析版本范围，也不从其他
@@ -182,10 +182,10 @@ def _reachable_names(root_deps, packages_map):
 def reachable_items(root_deps, packages_map):
     """返回自根节点沿 dependencies 可达的条目（不含根节点），按名称排序。
 
-    可达性语义见 _reachable_names；direct 仍只表示根节点 dependencies
+    可达性语义见 reachable_names；direct 仍只表示根节点 dependencies
     是否直接声明该包。
     """
-    seen = _reachable_names(root_deps, packages_map)
+    seen = reachable_names(root_deps, packages_map)
     direct = set(root_deps)
     return [
         {"name": name, "version": packages_map[name]["version"], "direct": name in direct}
@@ -199,7 +199,7 @@ def sbom_document(root_deps, packages_map, reachable=False):
     顶层仅含 format、formatVersion、components。默认 components 覆盖全部
     已安装包（不含根项目），根节点不可达的包同样保留；reachable 为 True
     时只保留自根节点沿 dependencies 可达的包（与 list --reachable 同一
-    语义，可达性规则见 _reachable_names），格式标记与其余字段含义不变。
+    语义，可达性规则见 reachable_names），格式标记与其余字段含义不变。
     组件按完整包名 Unicode 码点升序排列，每个包名只出现一次。名称与版本
     字符串原样保留；direct 仅表示根节点 dependencies 是否声明该包，与
     其他包的依赖关系无关。许可证与安全元数据本轮不解读，license、
@@ -208,7 +208,7 @@ def sbom_document(root_deps, packages_map, reachable=False):
     不重复。
     """
     if reachable:
-        names = _reachable_names(root_deps, packages_map)
+        names = reachable_names(root_deps, packages_map)
     else:
         names = packages_map.keys()
     direct = set(root_deps)
@@ -236,6 +236,9 @@ def diff_items(before_map, after_map):
     仅新清单存在的标记 added，仅旧清单存在的标记 removed，两边版本字符串
     不同的标记 changed；版本完全相同的包不输出。按包名 Unicode 码点排序，
     每个包最多出现一次。不解析版本范围，也不判断升级、降级或安全风险。
+
+    本函数只比较传入的两份映射；diff --reachable 的根可达筛选由调用方
+    先用 reachable_names 过滤两侧映射完成，两参数调用语义不变。
     """
     records = []
     for name in sorted(set(before_map) | set(after_map)):

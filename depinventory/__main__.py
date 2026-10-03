@@ -12,6 +12,7 @@ from .lockfile import (
     list_items,
     load_lockfile,
     reachable_items,
+    reachable_names,
     sbom_document,
 )
 
@@ -51,6 +52,12 @@ def _build_parser():
     diff_parser = subparsers.add_parser("diff", help="比较两份清单的版本差异")
     diff_parser.add_argument("before", help="旧清单 package-lock.json 路径")
     diff_parser.add_argument("after", help="新清单 package-lock.json 路径")
+    diff_parser.add_argument(
+        "--reachable",
+        action="store_true",
+        help="只比较两份清单各自自根节点沿 dependencies 可达的条目；"
+        "省略时比较全部已安装条目。",
+    )
 
     sbom_parser = subparsers.add_parser(
         "sbom", help="导出简化 SBOM（产品自有格式，非标准 SBOM）"
@@ -71,8 +78,8 @@ def main(argv=None):
 
     try:
         if args.command == "diff":
-            _, before_map = load_lockfile(args.before)
-            _, after_map = load_lockfile(args.after)
+            before_root, before_map = load_lockfile(args.before)
+            after_root, after_map = load_lockfile(args.after)
         else:
             root_deps, packages_map = load_lockfile(args.lockfile)
     except InputError:
@@ -92,6 +99,22 @@ def main(argv=None):
         elif args.command == "sbom":
             result = sbom_document(root_deps, packages_map, reachable=args.reachable)
         elif args.command == "diff":
+            if args.reachable:
+                # 两份清单各自从根节点 dependencies 出发确定可达集合，
+                # 只保留可达条目后再比较；校验已在加载时整份完成，
+                # 不可达包的错误同样导致失败。
+                before_keep = reachable_names(before_root, before_map)
+                after_keep = reachable_names(after_root, after_map)
+                before_map = {
+                    name: info
+                    for name, info in before_map.items()
+                    if name in before_keep
+                }
+                after_map = {
+                    name: info
+                    for name, info in after_map.items()
+                    if name in after_keep
+                }
             result = diff_items(before_map, after_map)
         else:
             path = find_path(root_deps, packages_map, args.name, args.source)
