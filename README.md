@@ -46,7 +46,11 @@ python -m depinventory diff demo-lock.json new-lock.json
 
 ## 支持范围
 
-- UTF-8 编码的 JSON；
+- UTF-8 编码的严格 JSON：非标准数值常量 `NaN`、`Infinity`、`-Infinity`
+  不得作为值出现在任意层级（包括不参与分析的额外元数据、根节点不可达
+  包内），违反即整份拒绝；字符串值 `"NaN"`/`"Infinity"`/`"-Infinity"`、
+  含这些文字的描述及同名对象键按普通文本处理，合法数字（含 `1e999`
+  这样超出浮点范围的指数文本）仍可读取；
 - `lockfileVersion` 为整数 `3`，`packages` 为对象且含空串根节点，条目均为对象；
 - 平铺安装路径 `node_modules/name` 与 `node_modules/@scope/name`，
   版本为非空字符串；

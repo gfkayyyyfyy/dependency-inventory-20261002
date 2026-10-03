@@ -1,7 +1,9 @@
 """npm 锁文件（package-lock.json v3 平铺结构）的解析、校验与查询。
 
 仅支持：
-- UTF-8 编码的 JSON；
+- UTF-8 编码的严格 JSON：Python json 默认接受的非标准数值常量
+  NaN、Infinity、-Infinity 一律拒绝（出现在任意层级的值位置，
+  即使落在不参与分析的元数据中）；字符串内的同名文本不受影响；
 - lockfileVersion 为整数 3；
 - packages 为对象，且含空串 "" 根节点；
 - 根节点及每个包条目均为对象；
@@ -32,6 +34,15 @@ class NotFoundError(Exception):
 def _is_int(value):
     # bool 是 int 的子类，需显式排除。
     return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _reject_json_constant(value):
+    # Python json 默认把裸 NaN / Infinity / -Infinity 当作合法数值扩展
+    # （NaN/Infinity 并非标准 JSON）。parse_constant 仅在这三个标记作为
+    # 值出现时回调，不作用于字符串内容、对象键或普通数字；故抛
+    # ValueError 即可整份拒绝，由 json.loads 原样向上传播。合法但超出
+    # 浮点范围的数字文本（如 1e999）走数字解析路径返回 inf，不会到这里。
+    raise ValueError("non-standard JSON constant: " + value)
 
 
 def _entry_name(key):
@@ -81,7 +92,10 @@ def load_lockfile(path):
         raise InputError("lockfile is not valid UTF-8") from exc
 
     try:
-        data = json.loads(text)
+        # parse_constant 在解析阶段拒绝裸 NaN/Infinity/-Infinity，无论其
+        # 位于根、包条目还是任意层级的忽略元数据中；字符串与 1e999 等
+        # 合法数字文本不触发该回调，故仍可读取。
+        data = json.loads(text, parse_constant=_reject_json_constant)
     except (json.JSONDecodeError, ValueError) as exc:
         raise InputError("invalid JSON") from exc
 
