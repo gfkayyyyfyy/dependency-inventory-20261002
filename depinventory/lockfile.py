@@ -160,6 +160,31 @@ def list_items(root_deps, packages_map):
     ]
 
 
+def reachable_items(root_deps, packages_map):
+    """返回自根节点沿 dependencies 可达的条目（不含根节点），按名称排序。
+
+    可达性只看 dependencies 声明的包名连边，不解释版本范围，也不从其他
+    元数据补充连边。多条路径引入同一包只输出一次；自环与循环依赖由
+    visited 集合保证每个节点只处理一次，正常结束；完全脱离根节点的
+    条目（包括互成循环但与根断开的包）整体排除。direct 仍只表示根节点
+    dependencies 是否直接声明该包。不修改 root_deps、packages_map。
+    """
+    visited = set()
+    queue = deque(root_deps)
+    while queue:
+        name = queue.popleft()
+        if name in visited:
+            continue
+        visited.add(name)
+        queue.extend(packages_map[name]["deps"])
+
+    direct = set(root_deps)
+    return [
+        {"name": name, "version": packages_map[name]["version"], "direct": name in direct}
+        for name in sorted(visited)
+    ]
+
+
 def sbom_document(root_deps, packages_map):
     """生成简化 SBOM 文档（产品自有格式，不声明符合其他 SBOM 标准）。
 

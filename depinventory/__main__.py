@@ -11,6 +11,7 @@ from .lockfile import (
     find_path,
     list_items,
     load_lockfile,
+    reachable_items,
     sbom_document,
 )
 
@@ -27,6 +28,11 @@ def _build_parser():
 
     list_parser = subparsers.add_parser("list", help="列出全部已安装条目")
     list_parser.add_argument("lockfile", help="package-lock.json 路径")
+    list_parser.add_argument(
+        "--reachable",
+        action="store_true",
+        help="只列出自根项目沿 dependencies 可达的包；省略时输出完整清单。",
+    )
 
     why_parser = subparsers.add_parser(
         "why", help="查询目标包自根节点（或指定起点包）的最短依赖路径"
@@ -74,7 +80,10 @@ def main(argv=None):
 
     try:
         if args.command == "list":
-            result = list_items(root_deps, packages_map)
+            if args.reachable:
+                result = reachable_items(root_deps, packages_map)
+            else:
+                result = list_items(root_deps, packages_map)
         elif args.command == "sbom":
             result = sbom_document(root_deps, packages_map)
         elif args.command == "diff":
