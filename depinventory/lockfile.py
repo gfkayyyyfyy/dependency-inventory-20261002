@@ -341,3 +341,29 @@ def find_path(root_deps, packages_map, target, source=None):
     # 单起点无需排序；source == target 时首次出队即命中，返回 [source]，
     # 不依赖自环。
     return _shortest_path([source], packages_map, target)
+
+
+def find_parents(root_deps, packages_map, target):
+    """返回 target 的直接上游：{"direct": 是否根声明, "parents": [包名]}。
+
+    target 不存在抛 NotFoundError。
+
+    direct 仅表示根节点 dependencies 是否声明 target。parents 是自身
+    dependencies 中直接声明 target 的全部已安装包名（直接边，不逐层展开
+    祖先），根项目不作为成员；查询覆盖整份清单，包括自根节点不可达的
+    包，因此与根断开的包仍可能成为 parent。parents 按完整包名 Unicode
+    码点升序排列并去重；多个包重复声明同一目标各自只出现一次。自环保留
+    目标自身（target 声明 target 时 target 进入 parents），循环关系无需
+    遍历即可正常结束。
+
+    关系只取 dependencies，不解析版本范围，也不从其他字段补边。
+    不修改 root_deps、packages_map 及其内的 deps 列表。
+    """
+    if target not in packages_map:
+        raise NotFoundError(target)
+    parents = {
+        name
+        for name, info in packages_map.items()
+        if target in info["deps"]
+    }
+    return {"direct": target in root_deps, "parents": sorted(parents)}

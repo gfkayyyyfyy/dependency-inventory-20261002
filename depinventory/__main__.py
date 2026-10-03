@@ -1,4 +1,4 @@
-"""命令行入口：python -m depinventory list|why|diff|sbom <lockfile> [参数]。"""
+"""命令行入口：python -m depinventory list|why|parents|diff|sbom <lockfile> [参数]。"""
 
 import argparse
 import json
@@ -9,6 +9,7 @@ from .lockfile import (
     NotFoundError,
     diff_items,
     find_path,
+    find_parents,
     list_items,
     load_lockfile,
     reachable_items,
@@ -48,6 +49,12 @@ def _build_parser():
         help="以指定已安装包为查询起点；省略时自根节点 $root 查起。"
         "按区分大小写的完整包名匹配，字面值 $root 仍按普通包名查找。",
     )
+
+    parents_parser = subparsers.add_parser(
+        "parents", help="查询目标包的全部直接上游（哪些已安装包声明了它）"
+    )
+    parents_parser.add_argument("lockfile", help="package-lock.json 路径")
+    parents_parser.add_argument("name", help="按区分大小写的完整包名查询")
 
     diff_parser = subparsers.add_parser("diff", help="比较两份清单的版本差异")
     diff_parser.add_argument("before", help="旧清单 package-lock.json 路径")
@@ -116,6 +123,13 @@ def main(argv=None):
                     if name in after_keep
                 }
             result = diff_items(before_map, after_map)
+        elif args.command == "parents":
+            found = find_parents(root_deps, packages_map, args.name)
+            result = {
+                "name": args.name,
+                "direct": found["direct"],
+                "parents": found["parents"],
+            }
         else:
             path = find_path(root_deps, packages_map, args.name, args.source)
             result = {"name": args.name, "path": path}
