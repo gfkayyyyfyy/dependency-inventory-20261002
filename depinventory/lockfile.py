@@ -2,6 +2,8 @@
 
 仅支持：
 - UTF-8 编码的 JSON；
+- 严格 JSON：NaN、Infinity、-Infinity 等非标准数值常量在任意层级
+  （含不参与分析的元数据与不可达包条目内）出现即整份拒绝；
 - lockfileVersion 为整数 3；
 - packages 为对象，且含空串 "" 根节点；
 - 根节点及每个包条目均为对象；
@@ -32,6 +34,16 @@ class NotFoundError(Exception):
 def _is_int(value):
     # bool 是 int 的子类，需显式排除。
     return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _reject_constant(name):
+    # json.loads 默认接受 NaN、Infinity、-Infinity 这三个非标准 JSON
+    # 数值常量。它们不是合法 JSON 文本，无论出现在哪一层（根条目、
+    # 包条目、额外元数据，包括根节点不可达包内的对象或数组）都必须
+    # 整份拒绝，不得跳过无关字段或忽略非法值后继续。
+    # 字符串 "NaN"/"Infinity"/"-Infinity" 与 1e999 这类合法数字文本
+    # 不经过此回调，不受影响。
+    raise InputError("non-standard JSON numeric constant: %s" % name)
 
 
 def _entry_name(key):
@@ -81,7 +93,9 @@ def load_lockfile(path):
         raise InputError("lockfile is not valid UTF-8") from exc
 
     try:
-        data = json.loads(text)
+        data = json.loads(text, parse_constant=_reject_constant)
+    except InputError:
+        raise
     except (json.JSONDecodeError, ValueError) as exc:
         raise InputError("invalid JSON") from exc
 
