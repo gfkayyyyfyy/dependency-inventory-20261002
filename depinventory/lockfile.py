@@ -310,6 +310,29 @@ def _shortest_path(starts, packages_map, target):
     return path
 
 
+def parents_of(root_deps, packages_map, target):
+    """返回 target 的直接上游信息 {"name", "direct", "parents"}。
+
+    target 未安装抛 NotFoundError。direct 表示根节点 dependencies 是否
+    声明 target；parents 为自身 dependencies 中声明 target 的全部已安装
+    包名，按完整包名 Unicode 码点升序排列且去重。根项目只影响 direct，
+    不作为 parents 成员。查询覆盖整份清单，包括根节点不可达的包；只取
+    dependencies 的直接边，不解析版本范围，也不补入其他字段的依赖。
+    自环使 target 出现在自身 parents 中；循环关系只返回直接声明目标的包，
+    不追溯更远的祖先。不修改 root_deps、packages_map 及其内的 deps 列表。
+    """
+    if target not in packages_map:
+        raise NotFoundError(target)
+    parents = sorted(
+        name for name, info in packages_map.items() if target in info["deps"]
+    )
+    return {
+        "name": target,
+        "direct": target in set(root_deps),
+        "parents": parents,
+    }
+
+
 def find_path(root_deps, packages_map, target, source=None):
     """返回到 target 的最短包名路径；不可达返回 []。
 

@@ -20,6 +20,9 @@ python -m depinventory why demo-lock.json beta
 # 以指定已安装包为起点，查询它到目标包之间的最短路径
 python -m depinventory why demo-lock.json beta --from alpha
 
+# 查询某包的直接上游（哪些已安装包在自己的 dependencies 中声明了它）
+python -m depinventory parents demo-lock.json beta
+
 # 比较两份清单的版本差异（参数顺序决定方向：旧清单在前）
 python -m depinventory diff demo-lock.json new-lock.json
 
@@ -45,6 +48,16 @@ python -m depinventory diff demo-lock.json new-lock.json --reachable
 起点与目标都按区分大小写的完整已安装包名匹配（支持 `@scope/name`），
 `--from` 的字面值始终表示安装包，`$root` 也按普通包名查找，不是虚拟根别名；
 起点或目标未安装时以 `NOT_FOUND` 失败。
+
+`parents` 输出仅含 `name`、`direct`、`parents` 的 JSON 对象：`name` 原样保留
+查询名；`direct` 表示根节点 `dependencies` 是否声明目标；`parents` 为自身
+`dependencies` 中声明目标的全部已安装包名，按完整包名 Unicode 码点升序排列
+且去重。根项目只影响 `direct`，不作为 `parents` 成员。查询覆盖整份清单，
+包括根节点不可达的包；只取 `dependencies` 的直接边，不解析版本范围，也不
+补入其他字段的依赖，更不列出更远的祖先。没有上游的已安装目标输出空
+`parents`；自环使目标出现在自身 `parents` 中，循环关系正常结束且只返回
+直接声明目标的包。目标按区分大小写的完整包名匹配（支持 `@scope/name`），
+字面值 `$root` 仍表示普通已安装包；目标未安装时以 `NOT_FOUND` 失败。
 
 `diff` 输出 JSON 数组，每项仅含 `name`、`change`、`before`、`after`。
 比较两份清单的全部已安装条目（含根节点不可达的包，不含根项目）：
@@ -81,7 +94,7 @@ python -m depinventory diff demo-lock.json new-lock.json --reachable
 | 退出码 | 含义 | 标准错误 |
 | --- | --- | --- |
 | 0 | 成功 | — |
-| 1 | 查询的包不存在（`why`） | `NOT_FOUND` |
+| 1 | 查询的包不存在（`why`、`parents`） | `NOT_FOUND` |
 | 2 | 输入错误（文件不可读、JSON 损坏、结构/版本字段无效、悬空依赖、不支持的结构） | `INPUT_ERROR` |
 
 `diff` 的两份输入都遵循同一套校验规则，任一文件无效即整体失败。
@@ -101,6 +114,8 @@ $ python -m depinventory why demo-lock.json beta --from alpha
 {"name": "beta", "path": ["alpha", "beta"]}
 $ python -m depinventory why demo-lock.json alpha --from beta
 {"name": "alpha", "path": []}
+$ python -m depinventory parents demo-lock.json beta
+{"name": "beta", "direct": false, "parents": ["alpha"]}
 $ python -m depinventory diff demo-lock.json new-lock.json
 [{"name": "alpha", "change": "removed", "before": "1.0.0", "after": null}, {"name": "beta", "change": "changed", "before": "2.0.0", "after": "2.1.0"}, {"name": "gamma", "change": "added", "before": null, "after": "3.0.0"}]
 $ python -m depinventory diff demo-lock.json new-lock.json --reachable
