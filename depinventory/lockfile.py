@@ -160,14 +160,13 @@ def list_items(root_deps, packages_map):
     ]
 
 
-def reachable_items(root_deps, packages_map):
-    """返回自根节点沿 dependencies 可达的条目（不含根节点），按名称排序。
+def _reachable_names(root_deps, packages_map):
+    """返回自根节点沿 dependencies 可达的包名集合（不含根节点）。
 
     可达性只看 dependencies 声明的包名连边，不解析版本范围，也不从其他
-    元数据补充连边。根直接声明的包及其逐层依赖都保留；多条路径引入同一
-    包只输出一次。自环与循环由 seen 集合保证每个节点只扩展一次，正常
-    结束；完全脱离根节点的包（包括与根断开的循环）整体排除。direct 仍
-    只表示根节点 dependencies 是否直接声明该包。
+    元数据补充连边。根直接声明的包及其逐层依赖都可达；多条路径引入同一
+    包只记录一次。自环与循环由 seen 集合保证每个节点只扩展一次，正常
+    结束；完全脱离根节点的包（包括与根断开的循环）整体排除。
     """
     seen = set()
     queue = deque(root_deps)
@@ -177,6 +176,16 @@ def reachable_items(root_deps, packages_map):
             continue
         seen.add(name)
         queue.extend(packages_map[name]["deps"])
+    return seen
+
+
+def reachable_items(root_deps, packages_map):
+    """返回自根节点沿 dependencies 可达的条目（不含根节点），按名称排序。
+
+    可达性语义见 _reachable_names；direct 仍只表示根节点 dependencies
+    是否直接声明该包。
+    """
+    seen = _reachable_names(root_deps, packages_map)
     direct = set(root_deps)
     return [
         {"name": name, "version": packages_map[name]["version"], "direct": name in direct}
@@ -184,17 +193,24 @@ def reachable_items(root_deps, packages_map):
     ]
 
 
-def sbom_document(root_deps, packages_map):
+def sbom_document(root_deps, packages_map, reachable=False):
     """生成简化 SBOM 文档（产品自有格式，不声明符合其他 SBOM 标准）。
 
-    顶层仅含 format、formatVersion、components。components 覆盖全部已安装
-    包（不含根项目），根节点不可达的包同样保留；按完整包名 Unicode 码点
-    升序排列，每个包名只出现一次。名称与版本字符串原样保留；direct 仅
-    表示根节点 dependencies 是否声明该包，与其他包的依赖关系无关。
-    许可证与安全元数据本轮不解读，license、securityStatus 固定为
-    "unknown"，未知不代表没有风险，也不根据版本推断安全结论。
-    循环依赖不影响结果：组件来自 packages_map 本身，天然不重复。
+    顶层仅含 format、formatVersion、components。默认 components 覆盖全部
+    已安装包（不含根项目），根节点不可达的包同样保留；reachable 为 True
+    时只保留自根节点沿 dependencies 可达的包（与 list --reachable 同一
+    语义，可达性规则见 _reachable_names），格式标记与其余字段含义不变。
+    组件按完整包名 Unicode 码点升序排列，每个包名只出现一次。名称与版本
+    字符串原样保留；direct 仅表示根节点 dependencies 是否声明该包，与
+    其他包的依赖关系无关。许可证与安全元数据本轮不解读，license、
+    securityStatus 固定为 "unknown"，未知不代表没有风险，也不根据版本
+    推断安全结论。循环依赖不影响结果：组件来自 packages_map 本身，天然
+    不重复。
     """
+    if reachable:
+        names = _reachable_names(root_deps, packages_map)
+    else:
+        names = packages_map.keys()
     direct = set(root_deps)
     components = [
         {
@@ -205,7 +221,7 @@ def sbom_document(root_deps, packages_map):
             "license": "unknown",
             "securityStatus": "unknown",
         }
-        for name in sorted(packages_map.keys())
+        for name in sorted(names)
     ]
     return {
         "format": "depinventory-sbom",
