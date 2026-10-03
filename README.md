@@ -22,6 +22,9 @@ python -m depinventory why demo-lock.json beta --from alpha
 
 # 比较两份清单的版本差异（参数顺序决定方向：旧清单在前）
 python -m depinventory diff demo-lock.json new-lock.json
+
+# 两侧分别只比较自根节点沿 dependencies 可达的条目
+python -m depinventory diff demo-lock.json new-lock.json --reachable
 ```
 
 `list` 向标准输出写 JSON 数组，每项仅含 `name`、`version`、`direct`
@@ -51,6 +54,16 @@ python -m depinventory diff demo-lock.json new-lock.json
 版本完全相同的包不输出，依赖声明、直接/传递身份、根项目版本及其他元数据
 变化不产生记录；不解析版本范围，也不判断升级、降级或安全风险。
 同一文件与自身比较或两边均只有根节点时输出 `[]`。
+
+带 `--reachable` 时改为两侧各自独立求根可达集合后再比较：只比较从各自根
+节点 `dependencies` 出发、沿包条目 `dependencies` 逐层可达的包，根项目不
+参与，连边只看区分大小写的完整包名（含 `@scope/name`），多条路径引入同一
+包不重复，可达自环与循环正常结束，与根断开的包和循环整体排除。仅新侧可达
+的包输出 `added`、`before` 为 `null`；仅旧侧可达的包输出 `removed`、
+`after` 为 `null`（即使该包两侧都安装且版本相同也如此）；两侧都可达时仅在
+版本字符串不同才输出 `changed`，可达性与版本均不变时直接/传递身份变化不
+产生记录。该筛选不放松整份输入校验：不可达包违反校验规则同样导致失败。
+省略该选项时比较语义与输出保持不变。
 
 ## 支持范围
 
@@ -93,6 +106,8 @@ $ python -m depinventory why demo-lock.json alpha --from beta
 {"name": "alpha", "path": []}
 $ python -m depinventory diff demo-lock.json new-lock.json
 [{"name": "alpha", "change": "removed", "before": "1.0.0", "after": null}, {"name": "beta", "change": "changed", "before": "2.0.0", "after": "2.1.0"}, {"name": "gamma", "change": "added", "before": null, "after": "3.0.0"}]
+$ python -m depinventory diff demo-lock.json new-lock.json --reachable
+[{"name": "alpha", "change": "removed", "before": "1.0.0", "after": null}, {"name": "beta", "change": "changed", "before": "2.0.0", "after": "2.1.0"}]
 ```
 
 `why beta` 的 `path` 为 `["$root", "alpha", "beta"]`。`new-lock.json` 是

@@ -230,13 +230,8 @@ def sbom_document(root_deps, packages_map, reachable=False):
     }
 
 
-def diff_items(before_map, after_map):
-    """比较两份清单的已安装条目（不含根节点），返回版本差异记录。
-
-    仅新清单存在的标记 added，仅旧清单存在的标记 removed，两边版本字符串
-    不同的标记 changed；版本完全相同的包不输出。按包名 Unicode 码点排序，
-    每个包最多出现一次。不解析版本范围，也不判断升级、降级或安全风险。
-    """
+def _diff_maps(before_map, after_map):
+    """两份名称→条目映射的版本差异比较（diff_items 的共享实现）。"""
     records = []
     for name in sorted(set(before_map) | set(after_map)):
         before = before_map.get(name)
@@ -259,6 +254,38 @@ def diff_items(before_map, after_map):
                 }
             )
     return records
+
+
+def diff_items(before_map, after_map):
+    """比较两份清单的已安装条目（不含根节点），返回版本差异记录。
+
+    仅新清单存在的标记 added，仅旧清单存在的标记 removed，两边版本字符串
+    不同的标记 changed；版本完全相同的包不输出。按包名 Unicode 码点排序，
+    每个包最多出现一次。不解析版本范围，也不判断升级、降级或安全风险。
+    """
+    return _diff_maps(before_map, after_map)
+
+
+def reachable_diff_items(before_root_deps, before_map, after_root_deps, after_map):
+    """比较两份清单中自根节点可达的条目，返回版本差异记录（diff --reachable）。
+
+    两侧各自独立按 _reachable_names 的规则求可达集合（只看区分大小写的
+    完整包名 dependencies 连边，不解析版本范围；多条路径不重复，自环与
+    循环正常结束，与根断开的包和循环排除，根项目不参与），再在两个可达
+    集合上应用 diff_items 的同一比较规则：仅新侧可达的包即使旧侧也安装
+    （含版本相同的情况）仍标记 added，仅旧侧可达的同理标记 removed；
+    两侧都可达时仅版本字符串不同输出 changed，版本原样保留，可达性与
+    版本均不变时直接/传递身份变化不产生记录。按包名 Unicode 码点排序，
+    每包最多一条；两侧可达集合均为空或同一文件与自身比较时输出 []。
+
+    可达性筛选不改变整份输入的校验：调用方仍须先对两份锁文件完整执行
+    load_lockfile 的校验，不可达包的结构错误同样导致失败。
+    """
+    before_reachable = _reachable_names(before_root_deps, before_map)
+    after_reachable = _reachable_names(after_root_deps, after_map)
+    before_view = {name: before_map[name] for name in before_reachable}
+    after_view = {name: after_map[name] for name in after_reachable}
+    return _diff_maps(before_view, after_view)
 
 
 def _shortest_path(starts, packages_map, target):

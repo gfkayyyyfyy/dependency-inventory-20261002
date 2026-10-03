@@ -11,6 +11,7 @@ from .lockfile import (
     find_path,
     list_items,
     load_lockfile,
+    reachable_diff_items,
     reachable_items,
     sbom_document,
 )
@@ -51,6 +52,11 @@ def _build_parser():
     diff_parser = subparsers.add_parser("diff", help="比较两份清单的版本差异")
     diff_parser.add_argument("before", help="旧清单 package-lock.json 路径")
     diff_parser.add_argument("after", help="新清单 package-lock.json 路径")
+    diff_parser.add_argument(
+        "--reachable",
+        action="store_true",
+        help="两侧分别只比较自根节点沿 dependencies 可达的条目；省略时比较全部已安装包。",
+    )
 
     sbom_parser = subparsers.add_parser(
         "sbom", help="导出简化 SBOM（产品自有格式，非标准 SBOM）"
@@ -71,8 +77,8 @@ def main(argv=None):
 
     try:
         if args.command == "diff":
-            _, before_map = load_lockfile(args.before)
-            _, after_map = load_lockfile(args.after)
+            before_root_deps, before_map = load_lockfile(args.before)
+            after_root_deps, after_map = load_lockfile(args.after)
         else:
             root_deps, packages_map = load_lockfile(args.lockfile)
     except InputError:
@@ -92,7 +98,12 @@ def main(argv=None):
         elif args.command == "sbom":
             result = sbom_document(root_deps, packages_map, reachable=args.reachable)
         elif args.command == "diff":
-            result = diff_items(before_map, after_map)
+            if args.reachable:
+                result = reachable_diff_items(
+                    before_root_deps, before_map, after_root_deps, after_map
+                )
+            else:
+                result = diff_items(before_map, after_map)
         else:
             path = find_path(root_deps, packages_map, args.name, args.source)
             result = {"name": args.name, "path": path}
