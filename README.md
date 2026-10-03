@@ -22,6 +22,10 @@ python -m depinventory why demo-lock.json beta --from alpha
 
 # 比较两份清单的版本差异（参数顺序决定方向：旧清单在前）
 python -m depinventory diff demo-lock.json new-lock.json
+
+# 导出简化 SBOM（产品自有格式）；--reachable 只保留根可达组件
+python -m depinventory sbom demo-lock.json
+python -m depinventory sbom demo-lock.json --reachable
 ```
 
 `list` 向标准输出写 JSON 数组，每项仅含 `name`、`version`、`direct`
@@ -51,6 +55,11 @@ python -m depinventory diff demo-lock.json new-lock.json
 版本完全相同的包不输出，依赖声明、直接/传递身份、根项目版本及其他元数据
 变化不产生记录；不解析版本范围，也不判断升级、降级或安全风险。
 同一文件与自身比较或两边均只有根节点时输出 `[]`。
+
+`sbom` 输出单个 JSON 文档（产品自有格式，不声明符合其他 SBOM 标准），
+字段与含义详见 SBOM.md。带 `--reachable` 时只保留自根节点沿
+`dependencies` 可达的组件，筛选语义与 `list --reachable` 一致；省略时
+导出全部已安装包。
 
 ## 支持范围
 

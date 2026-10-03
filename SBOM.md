@@ -49,6 +49,33 @@ main()                                   depinventory/__main__.py
 - 循环依赖不产生重复组件（组件直接来自 `packages_map`，天然不重复）；
 - 锁文件只有根节点时，`components` 为空数组 `[]`。
 
+## `--reachable` 筛选
+
+`sbom` 支持与 `list --reachable` 语义一致的筛选选项：
+
+```sh
+python -m depinventory sbom <lockfile> --reachable
+```
+
+带 `--reachable` 时只缩小 `components` 的范围，文档结构、字段与含义均不
+改变：
+
+- 筛选自根节点 `dependencies` 开始，沿已安装包的 `dependencies` 逐层
+  判断可达性；不解析版本范围，也不从其他元数据补充连边；
+- 根项目不成为组件；直接和传递依赖均保留，多条路径引入同一包只输出
+  一次；可达的自环与循环正常结束并保留相关包，与根断开的包和循环
+  全部排除；
+- 根 `dependencies` 省略、为空对象或只有根节点时，`components` 为
+  `[]`，`format` 与 `formatVersion` 标记仍保留；
+- `direct` 仍仅取决于根节点 `dependencies` 是否声明该包；
+- 筛选发生在**整份输入校验之后**：不可达条目的缺失版本、非法
+  `dependencies` 或悬空依赖同样导致整体失败（退出码 2），不会先产出
+  部分组件；
+- 省略该选项时行为与之前完全一致：导出全部已安装包。
+
+对应函数级接口为 `sbom_document_reachable(root_deps, packages_map)`；
+`sbom_document` 的既有两参数调用与结果保持不变。
+
 每个组件对象的字段：
 
 | 字段 | 含义 |
@@ -80,6 +107,13 @@ $ python -m depinventory sbom new-lock.json
 
 两份结果的 `direct` 依次为 `true`、`false`：`gamma` 虽不可达，仍被导出。
 
+同一份 `new-lock.json` 加 `--reachable` 时只保留根可达的 `beta`：
+
+```sh
+$ python -m depinventory sbom new-lock.json --reachable
+{"format": "depinventory-sbom", "formatVersion": 1, "components": [{"name": "beta", "version": "2.1.0", "ecosystem": "npm", "direct": true, "license": "unknown", "securityStatus": "unknown"}]}
+```
+
 ## 成功与失败的输出约定
 
 成功时：
@@ -95,5 +129,6 @@ UTF-8、JSON 损坏、缺少包版本、悬空依赖、嵌套路径或 `link: tr
 
 ## 兼容性
 
-`sbom` 为新增只读入口：现有样例文件及 `list`、`why`、`why --from`、
-`diff`、`sbom` 的接口与结果均保持不变。
+`sbom --reachable` 为新增只读筛选项：省略时 `sbom` 的接口与结果保持
+不变，`sbom_document` 的两参数调用与结果保持不变；现有样例文件及
+`list`、`why`、`why --from`、`diff` 的接口与结果均保持不变。

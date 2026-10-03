@@ -13,6 +13,7 @@ from .lockfile import (
     load_lockfile,
     reachable_items,
     sbom_document,
+    sbom_document_reachable,
 )
 
 _INPUT_ERROR = "INPUT_ERROR"
@@ -56,6 +57,11 @@ def _build_parser():
         "sbom", help="导出简化 SBOM（产品自有格式，非标准 SBOM）"
     )
     sbom_parser.add_argument("lockfile", help="package-lock.json 路径")
+    sbom_parser.add_argument(
+        "--reachable",
+        action="store_true",
+        help="只导出自根节点沿 dependencies 可达的组件；省略时导出全部已安装包。",
+    )
 
     return parser
 
@@ -85,7 +91,10 @@ def main(argv=None):
             else:
                 result = list_items(root_deps, packages_map)
         elif args.command == "sbom":
-            result = sbom_document(root_deps, packages_map)
+            if args.reachable:
+                result = sbom_document_reachable(root_deps, packages_map)
+            else:
+                result = sbom_document(root_deps, packages_map)
         elif args.command == "diff":
             result = diff_items(before_map, after_map)
         else:

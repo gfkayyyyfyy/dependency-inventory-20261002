@@ -160,14 +160,13 @@ def list_items(root_deps, packages_map):
     ]
 
 
-def reachable_items(root_deps, packages_map):
-    """返回自根节点沿 dependencies 可达的条目（不含根节点），按名称排序。
+def _reachable_names(root_deps, packages_map):
+    """返回自根节点沿 dependencies 可达的包名集合（不含根节点）。
 
     可达性只看 dependencies 声明的包名连边，不解析版本范围，也不从其他
-    元数据补充连边。根直接声明的包及其逐层依赖都保留；多条路径引入同一
-    包只输出一次。自环与循环由 seen 集合保证每个节点只扩展一次，正常
-    结束；完全脱离根节点的包（包括与根断开的循环）整体排除。direct 仍
-    只表示根节点 dependencies 是否直接声明该包。
+    元数据补充连边。根直接声明的包及其逐层依赖都可达；多条路径引入同一
+    包只计入一次。自环与循环由 seen 集合保证每个节点只扩展一次，正常
+    结束；完全脱离根节点的包（包括与根断开的循环）整体排除。
     """
     seen = set()
     queue = deque(root_deps)
@@ -177,11 +176,41 @@ def reachable_items(root_deps, packages_map):
             continue
         seen.add(name)
         queue.extend(packages_map[name]["deps"])
+    return seen
+
+
+def reachable_items(root_deps, packages_map):
+    """返回自根节点沿 dependencies 可达的条目（不含根节点），按名称排序。
+
+    可达性语义见 _reachable_names。direct 仍只表示根节点 dependencies
+    是否直接声明该包。
+    """
+    seen = _reachable_names(root_deps, packages_map)
     direct = set(root_deps)
     return [
         {"name": name, "version": packages_map[name]["version"], "direct": name in direct}
         for name in sorted(seen)
     ]
+
+
+def _sbom_document(names, direct, packages_map):
+    """由给定包名集合生成 SBOM 文档；名称按 Unicode 码点升序、各出现一次。"""
+    components = [
+        {
+            "name": name,
+            "version": packages_map[name]["version"],
+            "ecosystem": "npm",
+            "direct": name in direct,
+            "license": "unknown",
+            "securityStatus": "unknown",
+        }
+        for name in sorted(names)
+    ]
+    return {
+        "format": "depinventory-sbom",
+        "formatVersion": 1,
+        "components": components,
+    }
 
 
 def sbom_document(root_deps, packages_map):
@@ -195,23 +224,22 @@ def sbom_document(root_deps, packages_map):
     "unknown"，未知不代表没有风险，也不根据版本推断安全结论。
     循环依赖不影响结果：组件来自 packages_map 本身，天然不重复。
     """
-    direct = set(root_deps)
-    components = [
-        {
-            "name": name,
-            "version": packages_map[name]["version"],
-            "ecosystem": "npm",
-            "direct": name in direct,
-            "license": "unknown",
-            "securityStatus": "unknown",
-        }
-        for name in sorted(packages_map.keys())
-    ]
-    return {
-        "format": "depinventory-sbom",
-        "formatVersion": 1,
-        "components": components,
-    }
+    return _sbom_document(packages_map.keys(), set(root_deps), packages_map)
+
+
+def sbom_document_reachable(root_deps, packages_map):
+    """生成只含根可达组件的简化 SBOM 文档，格式与 sbom_document 相同。
+
+    与 sbom_document 的唯一区别是 components 的范围：只保留自根节点沿
+    dependencies 可达的包（语义与 list --reachable 一致，见
+    _reachable_names），根项目不成为组件，直接和传递依赖均保留，多条
+    路径引入同一包只输出一次，与根断开的包和循环全部排除。根
+    dependencies 省略、为空对象或只有根节点时 components 为 []，格式
+    标记仍保留。direct 仍仅取决于根 dependencies；license 与
+    securityStatus 同样固定为 "unknown"。
+    """
+    names = _reachable_names(root_deps, packages_map)
+    return _sbom_document(names, set(root_deps), packages_map)
 
 
 def diff_items(before_map, after_map):

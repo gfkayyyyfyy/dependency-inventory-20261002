@@ -10,6 +10,7 @@ from .lockfile import (
     load_lockfile,
     reachable_items,
     sbom_document,
+    sbom_document_reachable,
 )
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "load_lockfile",
     "reachable_items",
     "sbom_document",
+    "sbom_document_reachable",
 ]
