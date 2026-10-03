@@ -23,6 +23,9 @@ python -m depinventory why demo-lock.json beta --from alpha
 # 查询某包被哪些已安装包直接声明（直接上游，不去重根可达性）
 python -m depinventory parents demo-lock.json beta
 
+# 只列出自根节点沿 dependencies 可达的直接上游
+python -m depinventory parents parents-lock.json beta --reachable
+
 # 比较两份清单的版本差异（参数顺序决定方向：旧清单在前）
 python -m depinventory diff demo-lock.json new-lock.json
 
@@ -59,6 +62,13 @@ python -m depinventory diff demo-lock.json new-lock.json --reachable
 目标自身，循环关系正常结束。包名按区分大小写的完整名匹配（支持
 `@scope/name`），字面值 `$root` 仍表示名为 `$root` 的普通已安装包；目标
 未安装时以 `NOT_FOUND` 失败。
+
+带 `--reachable` 时只保留自根节点沿 `dependencies` 可达的直接上游（规则与
+`list --reachable` 相同）：不可达的声明者被排除，目标自身仅在可达且声明
+自身时进入 `parents`；已安装但不可达的目标仍成功返回 `direct` 为 `false`、
+`parents` 为 `[]`。该选项只限制 `parents` 成员，`direct` 含义不变；省略时
+输出原有完整查询结果。筛选不放宽校验，不可达包的结构错误同样使整份输入
+失败。
 
 `diff` 输出 JSON 数组，每项仅含 `name`、`change`、`before`、`after`。
 比较两份清单的全部已安装条目（含根节点不可达的包，不含根项目）：
@@ -119,6 +129,10 @@ $ python -m depinventory parents demo-lock.json beta
 {"name": "beta", "direct": false, "parents": ["alpha"]}
 $ python -m depinventory parents new-lock.json beta
 {"name": "beta", "direct": true, "parents": []}
+$ python -m depinventory parents parents-lock.json beta
+{"name": "beta", "direct": false, "parents": ["alpha", "orphan"]}
+$ python -m depinventory parents parents-lock.json beta --reachable
+{"name": "beta", "direct": false, "parents": ["alpha"]}
 $ python -m depinventory diff demo-lock.json new-lock.json
 [{"name": "alpha", "change": "removed", "before": "1.0.0", "after": null}, {"name": "beta", "change": "changed", "before": "2.0.0", "after": "2.1.0"}, {"name": "gamma", "change": "added", "before": null, "after": "3.0.0"}]
 $ python -m depinventory diff demo-lock.json new-lock.json --reachable
@@ -127,4 +141,6 @@ $ python -m depinventory diff demo-lock.json new-lock.json --reachable
 
 `why beta` 的 `path` 为 `["$root", "alpha", "beta"]`。`new-lock.json` 是
 `demo-lock.json` 的演进版：根依赖改为 `beta@2.1.0`，移除 `alpha`，并加入
-未被引用的 `gamma@3.0.0`。
+未被引用的 `gamma@3.0.0`。`parents-lock.json` 中根节点只声明
+`alpha@1.0.0`，`alpha` 与不可达的 `orphan` 都声明 `beta@1.0.0`，用于演示
+`parents --reachable` 对不可达直接上游的筛选。

@@ -1,0 +1,25 @@
+{
+  "lockfileVersion": 3,
+  "packages": {
+    "": {
+      "dependencies": {
+        "alpha": "*"
+      }
+    },
+    "node_modules/alpha": {
+      "version": "1.0.0",
+      "dependencies": {
+        "beta": "*"
+      }
+    },
+    "node_modules/orphan": {
+      "version": "1.0.0",
+      "dependencies": {
+        "beta": "*"
+      }
+    },
+    "node_modules/beta": {
+      "version": "1.0.0"
+    }
+  }
+}
