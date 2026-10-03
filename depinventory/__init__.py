@@ -8,6 +8,7 @@ from .lockfile import (
     find_path,
     list_items,
     load_lockfile,
+    reachable_items,
     sbom_document,
 )
 
@@ -19,5 +20,6 @@ __all__ = [
     "find_path",
     "list_items",
     "load_lockfile",
+    "reachable_items",
     "sbom_document",
 ]

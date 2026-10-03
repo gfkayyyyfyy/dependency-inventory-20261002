@@ -11,6 +11,9 @@
 # 列出全部已安装条目（不含根节点），按名称 Unicode 码点排序
 python -m depinventory list demo-lock.json
 
+# 只列出自根节点沿 dependencies 可达的条目
+python -m depinventory list demo-lock.json --reachable
+
 # 查询某包自根节点的最短依赖来源路径（区分大小写的完整包名）
 python -m depinventory why demo-lock.json beta
 
@@ -22,7 +25,12 @@ python -m depinventory diff demo-lock.json new-lock.json
 ```
 
 `list` 向标准输出写 JSON 数组，每项仅含 `name`、`version`、`direct`
-（`direct` 表示是否被根节点直接声明）；空清单输出 `[]`。
+（`direct` 表示是否被根节点直接声明）；空清单输出 `[]`。带 `--reachable`
+时只保留自根节点沿 `dependencies` 可达的包：根直接声明的包及其逐层依赖
+都保留，根项目本身不输出；多条路径引入同一包只输出一次，可达的自环或
+循环正常结束并保留相关包，完全脱离根节点的包（含与根断开的循环）整体
+排除。可达性只看 `dependencies`，不解析版本范围，也不从其他元数据补充
+连边；省略该选项时输出原有完整清单。
 
 `why` 输出仅含 `name` 和 `path` 的 JSON 对象；`path` 为从 `$root` 到目标的
 包名数组，取边数最少的路径，同长度按包名序列的 Unicode 码点字典序取第一条。
