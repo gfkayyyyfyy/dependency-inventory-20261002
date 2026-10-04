@@ -51,9 +51,10 @@ def _entry_name(key):
         return None
     rest = key[len(_PACKAGES_PREFIX):]
     if rest.startswith("@"):
-        # scoped 包：@scope/name，恰好一段斜杠，两侧均非空。
+        # scoped 包：@scope/name，恰好一段斜杠；@ 与斜杠之间的作用域
+        # 至少一个字符（"@" 本身不算作用域），包名一侧同样非空。
         parts = rest.split("/")
-        if len(parts) != 2 or not all(parts):
+        if len(parts) != 2 or parts[0] == "@" or not all(parts):
             return None
         return rest
     if not rest or "/" in rest:
