@@ -1,0 +1,22 @@
+{
+  "lockfileVersion": 3,
+  "packages": {
+    "": {
+      "dependencies": {
+        "alpha": "*"
+      }
+    },
+    "node_modules/alpha": {
+      "version": "1.0.0",
+      "dependencies": {
+        "@scope/leaf": "*"
+      }
+    },
+    "node_modules/@scope/leaf": {
+      "version": "2.0.0"
+    },
+    "node_modules/orphan": {
+      "version": "3.0.0"
+    }
+  }
+}
