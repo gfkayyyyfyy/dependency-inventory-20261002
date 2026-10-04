@@ -370,6 +370,39 @@ def find_parents(root_deps, packages_map, target):
     return {"direct": target in root_deps, "parents": sorted(parents)}
 
 
+def find_descendants(root_deps, packages_map, name):
+    """返回 name 沿 dependencies 可达的全部已安装包名（直接+传递）。
+
+    name 未安装抛 NotFoundError。
+
+    结果包含自 name 的 dependencies 出发、经过至少一条边能到达的全部
+    已安装包；name 自身与根项目始终排除——即使自环或循环让 name 重新
+    到达自身，也不把 name 列入结果，循环中其他可达包保留。同一包被多条
+    路径引入只出现一次。结果按完整包名 Unicode 码点升序排列并去重，
+    不受条目与依赖声明顺序影响。name 没有依赖时返回空列表。
+
+    起点是否自根节点可达不影响展开：一律沿 name 自身的 dependencies
+    查询，根 dependencies 省略或为空不改变该规则。关系只取
+    dependencies，不解析版本范围，也不从其他字段补边。
+    root_deps 仅为与其他查询函数保持一致的签名而保留。不修改
+    root_deps、packages_map 及其内的 deps 列表。
+    """
+    if name not in packages_map:
+        raise NotFoundError(name)
+    # 正向 BFS：seen 预置 name 自身，循环回到起点时不会再次入队。
+    seen = {name}
+    queue = deque(packages_map[name]["deps"])
+    descendants = []
+    while queue:
+        dep = queue.popleft()
+        if dep in seen:
+            continue
+        seen.add(dep)
+        descendants.append(dep)
+        queue.extend(packages_map[dep]["deps"])
+    return sorted(descendants)
+
+
 def find_ancestors(root_deps, packages_map, target):
     """返回 target 的全部上游：沿 dependencies 至少一条边能到达 target 的包名。
 
