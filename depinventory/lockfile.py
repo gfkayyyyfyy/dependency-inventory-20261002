@@ -194,40 +194,70 @@ def reachable_items(root_deps, packages_map):
     ]
 
 
-def _build_root_paths(root_deps, packages_map):
-    """一次 BFS 得到全部包相对根标记 $root 的最短路径。
+def _bfs_parents(starts, packages_map, target=None):
+    """统一的依赖图 BFS：返回各节点首次被发现时的前驱表。
 
-    与省略 --from 的 find_path 同源同序：第一层按 sorted(root_deps)
-    播种，其余各层按 sorted(deps) 扩展（规则见 _shortest_path），parent
-    首次命中即边数最少且包名序列 Unicode 码点字典序最小的路径；根不可
-    达的包不在结果中（调用方以 [] 补齐）。直接依赖只含根标记与包名，
-    作用域包是单个路径元素，自环、循环与共享依赖由 parent 表保证每个
-    节点只处理一次。只读，不修改 root_deps、packages_map 及其内的
-    deps 列表。
+    这是唯一维护路径选择规则的地方，单包查询（find_path 经
+    _shortest_path）与批量导出（sbom_document 经 _build_root_paths）
+    共用同一套遍历，规则不会在两处各自演化：
+
+    - 路径只沿 dependencies 连边，不解析版本范围；
+    - starts 须已按完整包名 Unicode 码点字典序排好，作为同一层起点；
+    - parent[node] 记录首次发现 node 的前驱，起点的前驱为 None；
+    - 每层扩展前对邻接 sorted(deps) 排序：BFS 按层扩展保证边数最少，
+      每层入队顺序即"到达该层节点的完整包名序列"的字典序（父路径严格
+      有序，子列表排序后扩展相同后缀保序），故首次命中就是边数最少且
+      包名序列字典序最小的路径，与条目及声明书写顺序无关；
+    - 同一节点只保留第一次命中：自环、循环与共享依赖由 parent 表保证
+      每个节点只扩展一次，正常结束。
+
+    target 为 None 时遍历全部可达节点（批量导出一次算出所有来源）；
+    给定时在 target 出队即停止（单包查询不必遍历全图，此时 parent 中
+    target 的前驱已是最优）。时间 O(V+E)、辅助存储 O(V)：parent 只记录
+    每个节点首次被发现时的前驱，队列不携带路径副本，出队为 O(1)。
+    只读，不修改 packages_map 及其内的 deps 列表。
     """
     parent = {}
     queue = deque()
-    for name in sorted(root_deps):
+    for name in starts:
         if name not in parent:
             parent[name] = None
             queue.append(name)
     while queue:
         node = queue.popleft()
+        if node == target:
+            break
         for dep in sorted(packages_map[node]["deps"]):
             if dep not in parent:
                 parent[dep] = node
                 queue.append(dep)
+    return parent
 
-    paths = {}
-    for name in parent:
-        path = [name]
-        predecessor = parent[name]
-        while predecessor is not None:
-            path.append(predecessor)
-            predecessor = parent[predecessor]
-        path.reverse()
-        paths[name] = [ROOT] + path
-    return paths
+
+def _reconstruct_path(parent, target):
+    """沿 parent 表自 target 回溯到起点，返回 起点→target 的包名路径。
+
+    target 必须在 parent 中；长度等于路径边数，仅回溯一次。
+    """
+    path = [target]
+    predecessor = parent[target]
+    while predecessor is not None:
+        path.append(predecessor)
+        predecessor = parent[predecessor]
+    path.reverse()
+    return path
+
+
+def _build_root_paths(root_deps, packages_map):
+    """一次 BFS 得到全部包相对根标记 $root 的最短路径。
+
+    遍历与裁决规则统一由 _bfs_parents 维护，与省略 --from 的 find_path
+    同源同序：第一层按 sorted(root_deps) 播种。根不可达的包不在结果中
+    （调用方以 [] 补齐）。直接依赖只含根标记与包名，作用域包是单个路径
+    元素。只读，不修改 root_deps、packages_map 及其内的 deps 列表。
+    """
+    parent = _bfs_parents(sorted(root_deps), packages_map)
+    return {name: [ROOT] + _reconstruct_path(parent, name) for name in parent}
 
 
 def sbom_document(root_deps, packages_map, reachable=False, with_paths=False):
@@ -320,45 +350,16 @@ def _shortest_path(starts, packages_map, target):
 
     starts 须已按字典序排好；不可达返回 []。
 
-    parent[node] 记录首次发现 node 的前驱；起点的前驱为 None。
-    同一节点只保留第一次命中：BFS 按层扩展，每一层的入队顺序即
-    “到达该层节点的完整包名序列”的字典序（父路径严格有序，子列表
-    排序后扩展相同后缀保序），故首次命中就是最短且字典序最小的路径。
-    循环依赖与自环由 parent 表保证每个节点只处理一次。
-
-    除起点排序与命中后的路径重建外，单次查询时间 O(V+E)、辅助存储
-    O(V)：parent 只记录每个节点首次被发现时的前驱，队列不携带路径
-    副本，且出队为 O(1)。不修改 packages_map 及其内的 deps 列表。
+    遍历与裁决规则统一由 _bfs_parents 维护（边数最少、等长按完整包名
+    序列的 Unicode 码点字典序、自环与循环只扩展一次，详见该函数）；
+    这里只负责命中判定与路径重建。target 命中即提前结束，不必遍历全图；
+    仅对命中的目标做一次回溯重建，长度等于路径边数，总量仍为 O(V)。
+    不修改 packages_map 及其内的 deps 列表。
     """
-    parent = {}
-    queue = deque()
-    for name in starts:
-        if name not in parent:
-            parent[name] = None
-            queue.append(name)
-
-    found = False
-    while queue:
-        node = queue.popleft()
-        if node == target:
-            found = True
-            break
-        for dep in sorted(packages_map[node]["deps"]):
-            if dep not in parent:
-                parent[dep] = node
-                queue.append(dep)
-
-    if not found:
+    parent = _bfs_parents(starts, packages_map, target)
+    if target not in parent:
         return []
-
-    # 仅对命中的目标做一次回溯重建，长度等于路径边数，总量仍为 O(V)。
-    path = [target]
-    predecessor = parent[target]
-    while predecessor is not None:
-        path.append(predecessor)
-        predecessor = parent[predecessor]
-    path.reverse()
-    return path
+    return _reconstruct_path(parent, target)
 
 
 def find_path(root_deps, packages_map, target, source=None):
