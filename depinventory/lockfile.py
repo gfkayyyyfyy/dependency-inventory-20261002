@@ -4,6 +4,12 @@
 - UTF-8 编码的严格 JSON：Python json 默认接受的非标准数值常量
   NaN、Infinity、-Infinity 一律拒绝（出现在任意层级的值位置，
   即使落在不参与分析的元数据中）；字符串内的同名文本不受影响；
+- 同一 JSON 对象内不得出现重复键：两个解码后完全相同的键名（按
+  JSON 字符串解码后的完整文本区分大小写比较，不做 Unicode 规范化，
+  "alpha" 与 "\\u0061lpha" 算重复，"alpha" 与 "Alpha" 不算）即整份
+  拒绝，即使两个值相同；规则覆盖顶层、packages、根条目、包条目、
+  dependencies 及任意额外元数据与数组内的对象，不可达包内同样生效；
+  不同对象各自出现同名键不受影响，字符串值内容不参与判断；
 - lockfileVersion 为整数 3；
 - packages 为对象，且含空串 "" 根节点；
 - 根节点及每个包条目均为对象；
@@ -43,6 +49,24 @@ def _reject_json_constant(value):
     # ValueError 即可整份拒绝，由 json.loads 原样向上传播。合法但超出
     # 浮点范围的数字文本（如 1e999）走数字解析路径返回 inf，不会到这里。
     raise ValueError("non-standard JSON constant: " + value)
+
+
+def _reject_duplicate_keys(pairs):
+    # object_pairs_hook 对每个 JSON 对象回调一次，pairs 中的键已完成
+    # JSON 字符串解码（\uXXXX 转义已还原），比较即按解码后的完整文本
+    # 区分大小写、不做 Unicode 规范化：同一对象内两个完全相同的键即
+    # 重复，即使两个值相同也抛 ValueError 整份拒绝；不同对象（不同包
+    # 条目、数组内不同元素）各自的同名键互不影响；字符串值内容不进入
+    # pairs 的键位，不参与判断。回调覆盖顶层、packages、根条目、包条目、
+    # dependencies 及任意额外元数据与数组内的对象，与可达性无关。
+    seen = set()
+    result = {}
+    for key, value in pairs:
+        if key in seen:
+            raise ValueError("duplicate object key: " + key)
+        seen.add(key)
+        result[key] = value
+    return result
 
 
 def _entry_name(key):
@@ -95,8 +119,14 @@ def load_lockfile(path):
     try:
         # parse_constant 在解析阶段拒绝裸 NaN/Infinity/-Infinity，无论其
         # 位于根、包条目还是任意层级的忽略元数据中；字符串与 1e999 等
-        # 合法数字文本不触发该回调，故仍可读取。
-        data = json.loads(text, parse_constant=_reject_json_constant)
+        # 合法数字文本不触发该回调，故仍可读取。object_pairs_hook 在解析
+        # 阶段拒绝同一对象内的重复键，覆盖所有层级的对象（含数组内对象
+        # 与不可达包），筛选选项无法绕过。
+        data = json.loads(
+            text,
+            parse_constant=_reject_json_constant,
+            object_pairs_hook=_reject_duplicate_keys,
+        )
     except (json.JSONDecodeError, ValueError) as exc:
         raise InputError("invalid JSON") from exc
 

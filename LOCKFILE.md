@@ -18,8 +18,8 @@
 
 1. **读取**：以 UTF-8 文本模式打开并读入整个文件；文件不可读或不是合法
    UTF-8 即失败。
-2. **解析**：`json.loads()` 把文本解析为 Python 对象；JSON 损坏或出现裸
-   `NaN`/`Infinity`/`-Infinity` 即失败。
+2. **解析**：`json.loads()` 把文本解析为 Python 对象；JSON 损坏、出现裸
+   `NaN`/`Infinity`/`-Infinity` 或同一对象内出现重复键即失败。
 3. **整份结构校验**：顶层结构、`lockfileVersion`、`packages` 根节点、每个
    条目的安装路径与版本、以及根节点和每个包条目的 `dependencies`，全部
    检查通过才算成功——**不区分该条目之后是否会被查询用到**。
@@ -33,7 +33,7 @@
    ▼
 load_lockfile(path)                      depinventory/lockfile.py
    1) 读取（open UTF-8）
-   2) 解析（json.loads，拒绝裸 NaN/Infinity/-Infinity）
+   2) 解析（json.loads，拒绝裸 NaN/Infinity/-Infinity 与同一对象内的重复键）
    3) 整份结构校验（_entry_name 识别安装路径，
       _validate_dependencies 校验根节点与每个包条目）
    4) 转换为 (root_deps, packages_map)
@@ -67,14 +67,22 @@ main() 的查询与输出阶段                  depinventory/__main__.py
 ## 阶段二：解析
 
 读取得到的文本交给
-`json.loads(text, parse_constant=_reject_json_constant)`：
+`json.loads(text, parse_constant=_reject_json_constant, object_pairs_hook=_reject_duplicate_keys)`：
 
 - JSON 语法损坏（`json.JSONDecodeError`）或解析期
   `ValueError` 都转为 `InputError("invalid JSON")`；
 - `_reject_json_constant()` 在裸 `NaN`、`Infinity`、`-Infinity` 作为**值**
   出现的任何层级（含不参与分析的元数据、根不可达包内）抛 `ValueError`，
   由解析路径包成 `InputError`，整份拒绝；字符串内的同名文本（如 `"NaN"`）、
-  对象键与普通数字不触发该回调，`1e999` 这样的合法指数文本仍可读取。
+  对象键与普通数字不触发该回调，`1e999` 这样的合法指数文本仍可读取；
+- `_reject_duplicate_keys()` 对每个 JSON 对象回调一次：同一对象内出现
+  两个解码后完全相同的键（按 JSON 字符串解码后的完整文本区分大小写比较，
+  不做 Unicode 规范化，`"alpha"` 与 `"\u0061lpha"` 解码后相同算重复，`"alpha"` 与
+  `"Alpha"` 不算）即抛 `ValueError` 整份拒绝，即使两个值相同；规则覆盖
+  顶层、`packages`、根条目、包条目、`dependencies` 及任意额外元数据与
+  数组内的对象，不可达包内同样生效，`--reachable` 等筛选发生在加载成功
+  之后，不能绕过；不同对象（不同包条目、数组内不同元素）各自出现同名键
+  互不影响，字符串值内容不参与判断。
 
 解析结果必须是 JSON 对象（Python `dict`），否则
 `InputError("lockfile root must be an object")`。
@@ -124,6 +132,8 @@ main() 的查询与输出阶段                  depinventory/__main__.py
 ### 支持的输入规则（与 README「支持范围」一致）
 
 - UTF-8 编码的严格 JSON，裸 `NaN`/`Infinity`/`-Infinity` 不得作为值出现；
+- 同一 JSON 对象内不得出现解码后完全相同的重复键（区分大小写、不做
+  Unicode 规范化，值相同也拒绝），覆盖所有层级的对象；
 - `lockfileVersion` 为整数 `3`；
 - `packages` 为对象且含空串根节点，根节点与所有包条目均为对象；
 - 平铺安装路径 `node_modules/name` 与 `node_modules/@scope/name`；
@@ -255,7 +265,7 @@ $ python -m depinventory why loader-example.json @scope/leaf
 | --- | --- |
 | 文件不可读（不存在、无权限等 `OSError`） | 读取 |
 | 非法 UTF-8（`UnicodeDecodeError`） | 读取 |
-| JSON 损坏、裸 `NaN`/`Infinity`/`-Infinity` | 解析 |
+| JSON 损坏、裸 `NaN`/`Infinity`/`-Infinity`、同一对象内重复键 | 解析 |
 | 既有结构校验失败：顶层不是对象、`lockfileVersion` 不是整数 3、`packages` 缺根节点、安装路径不支持、重复条目、`link: true`、版本缺失/为空/非字符串、`dependencies` 类型错误、键值非字符串、悬空依赖等 | 整份结构校验 |
 
 这些情形下：
