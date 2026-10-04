@@ -109,6 +109,14 @@ def _build_parser():
         "（与省略 --from 的 why 查询一致）；根不可达的组件 path 为 []。"
         "省略时组件字段保持原样。可与 --reachable 组合，仅为筛选后的组件附加路径。",
     )
+    sbom_parser.add_argument(
+        "--with-dependencies",
+        dest="with_dependencies",
+        action="store_true",
+        help="为每个组件附加 dependencies：该包条目直接声明的完整包名数组"
+        "（不展开传递依赖、不附带版本范围），按 Unicode 码点升序去重；"
+        "声明省略或为空时为 []。可与 --reachable、--with-paths 组合。",
+    )
 
     return parser
 
@@ -143,6 +151,7 @@ def main(argv=None):
                 packages_map,
                 reachable=args.reachable,
                 with_paths=args.with_paths,
+                with_dependencies=args.with_dependencies,
             )
         elif args.command == "diff":
             if args.reachable:

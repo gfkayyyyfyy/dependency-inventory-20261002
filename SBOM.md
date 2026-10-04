@@ -1,24 +1,29 @@
 # 简化 SBOM 导出说明
 
-本文档说明 `sbom` 命令（含 `--reachable` 筛选与 `--with-paths` 路径
-选项）与 `sbom_document` 函数的行为。导出结果为产品自有格式，**不声明
-符合 CycloneDX 或 SPDX** 等任何标准 SBOM 规范。
+本文档说明 `sbom` 命令（含 `--reachable` 筛选、`--with-paths` 路径与
+`--with-dependencies` 直接依赖选项）与 `sbom_document` 函数的行为。
+导出结果为产品自有格式，**不声明符合 CycloneDX 或 SPDX** 等任何标准
+SBOM 规范。
 
 ## 数据流与源码对应关系
 
 ```text
 锁文件（本地 JSON）
    │  python -m depinventory sbom <lockfile> [--reachable] [--with-paths]
+   │                                          [--with-dependencies]
    ▼
 load_lockfile(path)                      depinventory/lockfile.py
    │  读取并校验，返回 (root_deps, packages_map)；
    │  任何读取、解析或结构问题抛 InputError
    ▼
-sbom_document(root_deps, packages_map, reachable=False, with_paths=False)
+sbom_document(root_deps, packages_map, reachable=False, with_paths=False,
+              with_dependencies=False)
                                          depinventory/lockfile.py
    │  纯函数：由已校验数据生成组件列表，返回 SBOM 文档字典；
    │  带 --reachable 时以 reachable=True 调用，只保留可达组件；
-   │  带 --with-paths 时以 with_paths=True 调用，为每个组件附加 path
+   │  带 --with-paths 时以 with_paths=True 调用，为每个组件附加 path；
+   │  带 --with-dependencies 时以 with_dependencies=True 调用，
+   │  为每个组件附加 dependencies
    ▼
 main()                                   depinventory/__main__.py
    │  json.dumps(..., ensure_ascii=False) 后写入标准输出，末尾加一个换行
@@ -70,6 +75,7 @@ main()                                   depinventory/__main__.py
 | `license` | 固定为 `"unknown"`；即使输入附带许可证信息也不解读 |
 | `securityStatus` | 固定为 `"unknown"`；未知不代表没有风险，也不依据版本推断安全结论 |
 | `path` | **仅在 `--with-paths`（`with_paths=True`）时出现**：自 `"$root"` 到组件完整包名的最短依赖路径 |
+| `dependencies` | **仅在 `--with-dependencies`（`with_dependencies=True`）时出现**：该包条目直接声明的完整包名数组 |
 
 ### `path` 的语义
 
@@ -89,6 +95,25 @@ main()                                   depinventory/__main__.py
 - 自环、循环和共享依赖正常结束：每个组件在 `components` 中只出现一次，
   多条路径引入的同一包只得到一条最短路径；
 - 路径的选择与组件排序都不受 packages 条目顺序和 `dependencies` 声明
+  顺序影响；名称、版本原样保留，`direct` 的含义不因该选项改变。
+
+### `dependencies` 的语义
+
+仅当命令带 `--with-dependencies`（函数以 `with_dependencies=True` 调用）
+时，每个组件再附带一个 `dependencies` 数组；省略该选项时组件对象不含
+`dependencies`，输出与旧版本逐字段一致。
+
+- 数组只列出该包条目 `dependencies` **直接声明**的完整包名：不展开
+  传递依赖、不附带版本范围，也不从其他元数据补充连边；
+- 按完整包名的 Unicode 码点升序排列并去重，区分大小写；作用域包名
+  （`@scope/name`）作为整体保留为单个元素；
+- 声明省略或为空对象时输出 `[]`；
+- 自环保留自身（包声明自身时自身进入数组），循环双方分别保留各自
+  声明；组件仍来自 `packages_map`，不重复，根项目不成为组件；
+- 与 `--reachable` 组合时仅筛选组件集合，保留组件的 `dependencies`
+  数组不变；与 `--with-paths` 组合时 `path` 与 `dependencies` 各自
+  独立附加；
+- 数组内容与组件排序都不受 packages 条目顺序和 `dependencies` 声明
   顺序影响；名称、版本原样保留，`direct` 的含义不因该选项改变。
 
 ## 本地演示
@@ -145,6 +170,18 @@ $ python -m depinventory sbom new-lock.json --with-paths --reachable
 
 只有根节点时 `components` 仍为 `[]`，不受 `--with-paths` 影响。
 
+带 `--with-dependencies` 时每个组件额外携带 `dependencies` 数组。
+`sample-lock.json` 中 `alpha` 声明 `beta`、`beta` 与 `leaf` 互相声明
+（循环双方各自保留）、`orphan` 声明 `leaf`、`isolated` 无声明：
+
+```sh
+$ python -m depinventory sbom sample-lock.json --with-dependencies
+{"format": "depinventory-sbom", "formatVersion": 1, "components": [{"name": "alpha", "version": "1.0.0", "ecosystem": "npm", "direct": true, "license": "unknown", "securityStatus": "unknown", "dependencies": ["beta"]}, {"name": "beta", "version": "1.0.0", "ecosystem": "npm", "direct": false, "license": "unknown", "securityStatus": "unknown", "dependencies": ["leaf"]}, {"name": "isolated", "version": "1.0.0", "ecosystem": "npm", "direct": false, "license": "unknown", "securityStatus": "unknown", "dependencies": []}, {"name": "leaf", "version": "1.0.0", "ecosystem": "npm", "direct": false, "license": "unknown", "securityStatus": "unknown", "dependencies": ["beta"]}, {"name": "orphan", "version": "1.0.0", "ecosystem": "npm", "direct": false, "license": "unknown", "securityStatus": "unknown", "dependencies": ["leaf"]}]}
+```
+
+与 `--reachable` 组合只保留 `alpha`、`beta`、`leaf`，其 `dependencies`
+数组不变；与 `--with-paths` 组合时 `path` 与 `dependencies` 同时附加。
+
 ## 成功与失败的输出约定
 
 成功时：
@@ -158,14 +195,17 @@ UTF-8、JSON 损坏、缺少包版本、悬空依赖、嵌套路径或 `link: tr
 命令退出码为 `2`，标准输出为空，标准错误仅含 `INPUT_ERROR` 和一个换行，
 不输出部分结果或堆栈。带 `--reachable` 或 `--with-paths` 时同样在筛选、
 附路径前校验整份输入：不可达条目的缺失版本、非法 `dependencies` 或悬空
-依赖也导致整体失败。
+依赖也导致整体失败。带 `--with-dependencies` 时同样在附加数组前校验
+整份输入。
 
 ## 兼容性
 
 `sbom` 为只读入口：`sbom_document(root_deps, packages_map)` 的两参数
 调用及结果保持不变，`--reachable` 只缩小 `components` 范围，`--with-paths`
-只在带该选项时为组件增加 `path` 字段，均不改变文档格式与既有字段含义；
+只在带该选项时为组件增加 `path` 字段，`--with-dependencies` 只在带该
+选项时为组件增加 `dependencies` 字段，均不改变文档格式与既有字段含义；
 `reachable` 的位置参数与关键字调用（`sbom_document(rd, pm, True)`、
-`sbom_document(rd, pm, reachable=True)`）继续有效，`with_paths` 默认
-`False`。现有样例文件及 `list`、`why`、`why --from`、`diff` 的接口与
-结果均保持不变。导出只读：不改写输入文件、不联网、不安装或执行依赖。
+`sbom_document(rd, pm, reachable=True)`）继续有效，`with_paths` 与
+`with_dependencies` 默认 `False`。现有样例文件及 `list`、`why`、
+`why --from`、`diff` 的接口与结果均保持不变。导出只读：不改写输入
+文件、不联网、不安装或执行依赖。
