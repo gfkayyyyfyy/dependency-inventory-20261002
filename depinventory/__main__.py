@@ -117,6 +117,15 @@ def _build_parser():
         "按 Unicode 码点升序去重，不展开传递依赖；声明省略或为空时为 []。"
         "省略时组件字段保持原样。可与 --reachable、--with-paths 组合。",
     )
+    sbom_parser.add_argument(
+        "--with-purl",
+        dest="with_purl",
+        action="store_true",
+        help="为每个组件附加 purl：pkg:npm/包名@版本（作用域包为 "
+        "pkg:npm/作用域/包名@版本），名称片段与版本按 UTF-8 字节百分号编码；"
+        "只取原始包名与版本，不解析版本范围。省略时组件字段保持原样。"
+        "可与 --reachable、--with-paths、--with-dependencies 组合。",
+    )
 
     return parser
 
@@ -152,6 +161,7 @@ def main(argv=None):
                 reachable=args.reachable,
                 with_paths=args.with_paths,
                 with_dependencies=args.with_dependencies,
+                with_purl=args.with_purl,
             )
         elif args.command == "diff":
             if args.reachable:

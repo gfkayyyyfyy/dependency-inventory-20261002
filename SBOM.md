@@ -1,7 +1,8 @@
 # 简化 SBOM 导出说明
 
-本文档说明 `sbom` 命令（含 `--reachable` 筛选、`--with-paths` 路径与
-`--with-dependencies` 直接依赖选项）与 `sbom_document` 函数的行为。
+本文档说明 `sbom` 命令（含 `--reachable` 筛选、`--with-paths` 路径、
+`--with-dependencies` 直接依赖与 `--with-purl` Package URL 标识选项）与
+`sbom_document` 函数的行为。
 导出结果为产品自有格式，**不声明符合 CycloneDX 或 SPDX** 等任何标准
 SBOM 规范。
 
@@ -10,19 +11,21 @@ SBOM 规范。
 ```text
 锁文件（本地 JSON）
    │  python -m depinventory sbom <lockfile> [--reachable] [--with-paths]
-   │                                          [--with-dependencies]
+   │                                          [--with-dependencies] [--with-purl]
    ▼
 load_lockfile(path)                      depinventory/lockfile.py
    │  读取并校验，返回 (root_deps, packages_map)；
    │  任何读取、解析或结构问题抛 InputError
    ▼
 sbom_document(root_deps, packages_map, reachable=False, with_paths=False,
-              with_dependencies=False)     depinventory/lockfile.py
+              with_dependencies=False, with_purl=False)
+                                            depinventory/lockfile.py
    │  纯函数：由已校验数据生成组件列表，返回 SBOM 文档字典；
    │  带 --reachable 时以 reachable=True 调用，只保留可达组件；
    │  带 --with-paths 时以 with_paths=True 调用，为每个组件附加 path；
    │  带 --with-dependencies 时以 with_dependencies=True 调用，
-   │  为每个组件附加 dependencies
+   │  为每个组件附加 dependencies；
+   │  带 --with-purl 时以 with_purl=True 调用，为每个组件附加 purl
    ▼
 main()                                   depinventory/__main__.py
    │  json.dumps(..., ensure_ascii=False) 后写入标准输出，末尾加一个换行
@@ -75,6 +78,7 @@ main()                                   depinventory/__main__.py
 | `securityStatus` | 固定为 `"unknown"`；未知不代表没有风险，也不依据版本推断安全结论 |
 | `path` | **仅在 `--with-paths`（`with_paths=True`）时出现**：自 `"$root"` 到组件完整包名的最短依赖路径 |
 | `dependencies` | **仅在 `--with-dependencies`（`with_dependencies=True`）时出现**：该包条目直接声明的完整包名数组 |
+| `purl` | **仅在 `--with-purl`（`with_purl=True`）时出现**：npm Package URL 字符串 |
 
 ### `path` 的语义
 
@@ -114,6 +118,34 @@ main()                                   depinventory/__main__.py
   附加字段互不影响；
 - 数组内容不受 packages 条目顺序和 `dependencies` 声明顺序影响；
   名称、版本原样保留，`direct` 的含义不因该选项改变。
+
+### `purl` 的语义
+
+仅当命令带 `--with-purl`（函数以 `with_purl=True` 调用）时，每个组件
+附带一个字符串 `purl` 字段；省略该选项或为 `False` 时组件对象不含
+`purl`，输出与旧版本逐字段一致。标识只使用组件的完整包名与原始版本：
+
+- 普通包为 `pkg:npm/包名@版本`，如 `alpha` 的 `1.0.0` 输出
+  `pkg:npm/alpha@1.0.0`；
+- 作用域包为 `pkg:npm/作用域/包名@版本`，作用域包含开头的 `@`；该 `@`
+  不是结构分隔符，按普通字符编码为 `%40`，只有作用域与包名之间的 `/`
+  和版本前的 `@` 作为结构分隔符原样保留，如 `@scope/leaf` 的 `2.0.0`
+  输出 `pkg:npm/%40scope/leaf@2.0.0`；
+- 各名称片段（作用域、包名）与版本分别按 **UTF-8 字节**作百分号编码：
+  只保留 ASCII 字母、数字及 `-._~`，其余每个字节写成大写十六进制的
+  `%XX`；空格、`+`、`%` 分别编码为 `%20`、`%2B`、`%25`；非 ASCII
+  字符按其 UTF-8 字节逐字节转义（如 `ä` 为 `%C3%A4`）；
+- **不解码**输入中已有的百分号文本：版本 `100%20down` 中的 `%` 只作
+  普通字符，输出 `100%2520down`；
+- 原有 `name` 与 `version` 字段原样保留：不解析版本范围、不改大小写，
+  也不从其他元数据补充标识，`license` 与 `securityStatus` 仍为
+  `"unknown"`；
+- 未加 `--reachable` 时根不可达的组件同样获得 `purl`；空清单保持
+  `components` 为 `[]`；
+- 与 `--reachable`、`--with-paths`、`--with-dependencies` 可任意组合：
+  筛选、排序与已有附加字段语义不变，仅为筛选后保留的组件附加 `purl`；
+- 名称或版本含无法按 UTF-8 编码的码点（如 JSON `\uXXXX` 转义出的孤对
+  代理）时，整份导出按输入失败处理（见下节）。
 
 ## 本地演示
 
@@ -180,8 +212,20 @@ $ python -m depinventory sbom sample-lock.json --with-dependencies
 与 `--reachable` 组合时只保留 `alpha`、`beta`、`leaf`，保留组件的
 `dependencies` 数组不变；与 `--with-paths` 组合时两个附加字段同时出现。
 
-只有根节点时 `components` 仍为 `[]`，不受 `--with-paths` 与
-`--with-dependencies` 影响。
+带 `--with-purl` 时每个组件额外携带 `purl`。`loader-example.json` 中
+`alpha@1.0.0` 为根直接依赖，`@scope/leaf@2.0.0` 经 `alpha` 传递引入，
+`orphan@3.0.0` 已安装但根不可达：
+
+```sh
+$ python -m depinventory sbom loader-example.json --with-purl
+{"format": "depinventory-sbom", "formatVersion": 1, "components": [{"name": "@scope/leaf", "version": "2.0.0", "ecosystem": "npm", "direct": false, "license": "unknown", "securityStatus": "unknown", "purl": "pkg:npm/%40scope/leaf@2.0.0"}, {"name": "alpha", "version": "1.0.0", "ecosystem": "npm", "direct": true, "license": "unknown", "securityStatus": "unknown", "purl": "pkg:npm/alpha@1.0.0"}, {"name": "orphan", "version": "3.0.0", "ecosystem": "npm", "direct": false, "license": "unknown", "securityStatus": "unknown", "purl": "pkg:npm/orphan@3.0.0"}]}
+```
+
+作用域开头的 `@` 编码为 `%40`，结构斜杠与版本前的 `@` 保留；未筛选时
+根不可达的 `orphan` 同样获得标识，原 `name`、`version` 字段不变。
+
+只有根节点时 `components` 仍为 `[]`，不受 `--with-paths`、
+`--with-dependencies` 与 `--with-purl` 影响。
 
 ## 成功与失败的输出约定
 
@@ -194,9 +238,12 @@ $ python -m depinventory sbom sample-lock.json --with-dependencies
 失败时（`load_lockfile` 抛 `InputError` 的情形）：文件不可读、非法
 UTF-8、JSON 损坏、缺少包版本、悬空依赖、嵌套路径或 `link: true` 条目，
 命令退出码为 `2`，标准输出为空，标准错误仅含 `INPUT_ERROR` 和一个换行，
-不输出部分结果或堆栈。带 `--reachable`、`--with-paths` 或
-`--with-dependencies` 时同样在筛选、附加字段前校验整份输入：不可达
-条目的缺失版本、非法 `dependencies` 或悬空依赖也导致整体失败。
+不输出部分结果或堆栈。带 `--reachable`、`--with-paths`、
+`--with-dependencies` 或 `--with-purl` 时同样在筛选、附加字段前校验整份
+输入：不可达条目的缺失版本、非法 `dependencies` 或悬空依赖也导致整体
+失败。带 `--with-purl` 时，若组件的名称或版本文本无法按 UTF-8 编码
+（如 JSON 转义出的孤对代理），同样按输入失败处理：退出码 `2`、标准
+输出为空、标准错误仅 `INPUT_ERROR\n`，不输出此前已构造的部分组件。
 
 ## 兼容性
 
@@ -204,8 +251,10 @@ UTF-8、JSON 损坏、缺少包版本、悬空依赖、嵌套路径或 `link: tr
 调用及结果保持不变，`--reachable` 只缩小 `components` 范围，
 `--with-paths` 只在带该选项时为组件增加 `path` 字段，
 `--with-dependencies` 只在带该选项时为组件增加 `dependencies` 字段，
+`--with-purl` 只在带该选项时为组件增加 `purl` 字段，
 均不改变文档格式与既有字段含义；`reachable` 的位置参数与关键字调用
 （`sbom_document(rd, pm, True)`、`sbom_document(rd, pm, reachable=True)`）
-继续有效，`with_paths` 与 `with_dependencies` 均默认 `False`。现有样例
-文件及 `list`、`why`、`why --from`、`diff` 的接口与结果均保持不变。
+继续有效，`with_paths`、`with_dependencies` 与 `with_purl` 均默认
+`False`。现有样例文件及 `list`、`why`、`why --from`、`diff` 的接口与
+结果均保持不变。
 导出只读：不改写输入文件、不联网、不安装或执行依赖。

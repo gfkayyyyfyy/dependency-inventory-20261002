@@ -260,9 +260,51 @@ def _build_root_paths(root_deps, packages_map):
     return {name: [ROOT] + _reconstruct_path(parent, name) for name in parent}
 
 
+_PURL_UNRESERVED = frozenset(
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
+)
+
+
+def _purl_quote(text):
+    """对单个名称片段或版本做 PURL 百分号编码。
+
+    按 UTF-8 字节编码：仅保留 ASCII 字母、数字与 -._~ 不转义，其余字节
+    一律写成大写十六进制的 %XX（空格 %20、加号 %2B、百分号 %25）；
+    输入中已有的百分号文本只作普通字符处理，绝不先解码再编码，非 ASCII
+    字符按其 UTF-8 字节逐字节转义。结构分隔符 / 与 @ 不在此函数处理，
+    由调用方按 PURL 结构原样保留。text 含孤对代理等无法编码为 UTF-8 的
+    码点时向上抛 UnicodeEncodeError，由调用方统一转为 InputError。
+    """
+    out = []
+    for byte in text.encode("utf-8"):
+        if byte in _PURL_UNRESERVED:
+            out.append(chr(byte))
+        else:
+            out.append("%{:02X}".format(byte))
+    return "".join(out)
+
+
+def _package_purl(name, version):
+    """由完整包名与原始版本构造 npm Package URL。
+
+    普通包为 pkg:npm/包名@版本；作用域包为
+    pkg:npm/作用域/包名@版本，作用域含开头的 @（@ 本身不是非保留字符，
+    编码为 %40，只有结构分隔用的 / 与版本前的 @ 原样保留）。名称与版本
+    各自经 _purl_quote 按 UTF-8 字节编码，不解析版本范围、不改大小写，
+    也不从其他元数据补充标识。name 须为已通过结构校验的平铺包名。
+    """
+    if name.startswith("@"):
+        # 已校验的作用域包名恰好含一段斜杠，两侧均非空。
+        scope, _, pkg_name = name.partition("/")
+        path = _purl_quote(scope) + "/" + _purl_quote(pkg_name)
+    else:
+        path = _purl_quote(name)
+    return "pkg:npm/" + path + "@" + _purl_quote(version)
+
+
 def sbom_document(
     root_deps, packages_map, reachable=False, with_paths=False,
-    with_dependencies=False,
+    with_dependencies=False, with_purl=False,
 ):
     """生成简化 SBOM 文档（产品自有格式，不声明符合其他 SBOM 标准）。
 
@@ -296,6 +338,19 @@ def sbom_document(
     关系不影响保留组件的数组内容；与 with_paths 可同时启用，互不影响。
     省略或为 False 时组件不含 dependencies 字段，输出与旧结果完全一致。
     只读，不修改入参。
+
+    with_purl 为 True（CLI 的 --with-purl）时，每个组件再附带字符串
+    purl：只使用完整包名与原始版本，普通包为 pkg:npm/包名@版本，作用域
+    包为 pkg:npm/作用域/包名@版本，作用域含开头的 @。各名称片段与版本按
+    UTF-8 字节作百分号编码，只保留 ASCII 字母、数字及 -._~，十六进制
+    字母大写；结构分隔的 / 与 @ 保留，空格、加号、百分号分别编码为
+    %20、%2B、%25，不解码输入中已有的百分号文本。不解析版本范围、不改
+    大小写，也不从其他元数据补充标识；name 与 version 字段原样保留。
+    未加 --reachable 时根不可达的包同样获得 purl，空清单仍为 []。
+    名称或版本含无法按 UTF-8 编码的码点（如 JSON 转义出的孤对代理）时
+    抛 InputError；省略或为 False 时组件不含 purl 字段，输出与旧结果
+    完全一致。可与 reachable、with_paths、with_dependencies 任意组合，
+    筛选、排序与既有附加字段语义不变。只读，不修改入参。
     """
     if reachable:
         names = reachable_names(root_deps, packages_map)
@@ -306,14 +361,20 @@ def sbom_document(
     paths = _build_root_paths(root_deps, packages_map) if with_paths else None
     components = []
     for name in ordered:
+        version = packages_map[name]["version"]
         component = {
             "name": name,
-            "version": packages_map[name]["version"],
+            "version": version,
             "ecosystem": "npm",
             "direct": name in direct,
             "license": "unknown",
             "securityStatus": "unknown",
         }
+        if with_purl:
+            try:
+                component["purl"] = _package_purl(name, version)
+            except UnicodeEncodeError as exc:
+                raise InputError("purl text cannot be encoded as UTF-8") from exc
         if with_dependencies:
             # 只取该条目直接声明的包名：去重后按 Unicode 码点升序，
             # 自环与循环声明原样保留，不展开传递依赖。
