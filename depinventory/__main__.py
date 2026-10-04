@@ -68,6 +68,12 @@ def _build_parser():
     )
     ancestors_parser.add_argument("lockfile", help="package-lock.json 路径")
     ancestors_parser.add_argument("name", help="按区分大小写的完整包名查询")
+    ancestors_parser.add_argument(
+        "--reachable",
+        action="store_true",
+        help="ancestors 只保留自根节点沿 dependencies 可达的上游；"
+        "省略时列出整份清单中的全部上游。",
+    )
 
     diff_parser = subparsers.add_parser("diff", help="比较两份清单的版本差异")
     diff_parser.add_argument("before", help="旧清单 package-lock.json 路径")
@@ -137,9 +143,16 @@ def main(argv=None):
                 }
             result = diff_items(before_map, after_map)
         elif args.command == "ancestors":
+            ancestors = find_ancestors(root_deps, packages_map, args.name)
+            if args.reachable:
+                # 只按 ancestors 成员筛选：保留自根节点沿 dependencies
+                # 可达的上游；目标自身本就不在 ancestors 中。校验已在
+                # 加载时整份完成，不可达包的错误同样导致失败。
+                keep = reachable_names(root_deps, packages_map)
+                ancestors = [name for name in ancestors if name in keep]
             result = {
                 "name": args.name,
-                "ancestors": find_ancestors(root_deps, packages_map, args.name),
+                "ancestors": ancestors,
             }
         elif args.command == "parents":
             found = find_parents(root_deps, packages_map, args.name)

@@ -29,6 +29,9 @@ python -m depinventory parents parents-lock.json beta --reachable
 # 查询某包的全部上游（沿 dependencies 至少一条边能到达它的已安装包）
 python -m depinventory ancestors sample-lock.json leaf
 
+# 只列出根依赖链内的上游（ancestors 成员按根可达性筛选）
+python -m depinventory ancestors sample-lock.json leaf --reachable
+
 # 比较两份清单的版本差异（参数顺序决定方向：旧清单在前）
 python -m depinventory diff demo-lock.json new-lock.json
 
@@ -84,6 +87,16 @@ python -m depinventory diff demo-lock.json new-lock.json --reachable
 数组。包名按区分大小写的完整名匹配（支持 `@scope/name`），字面值
 `$root` 仍表示名为 `$root` 的普通已安装包；目标未安装时以 `NOT_FOUND`
 失败。
+
+带 `--reachable` 时只筛选 `ancestors` 成员：只保留自根节点
+`dependencies` 出发、沿包条目 `dependencies` 逐层可达的上游（每个保留
+成员既沿自身 `dependencies` 经过至少一条边到达目标，又自根节点可达；
+可达性规则与 `list --reachable` 相同，不解析版本范围，也不从其他字段
+补边），排序与去重规则不变。根项目与目标自身始终排除，自环或循环不会
+让目标重新进入结果，循环中其他合格上游仍保留；已安装但根不可达的目标
+（含根 `dependencies` 省略或为空时）仍成功返回空 `ancestors`。筛选不
+放宽整份校验，不可达包的结构错误同样使整份输入失败。省略该选项时行为
+不变。
 
 `diff` 输出 JSON 数组，每项仅含 `name`、`change`、`before`、`after`。
 比较两份清单的全部已安装条目（含根节点不可达的包，不含根项目）：
@@ -150,6 +163,8 @@ $ python -m depinventory parents parents-lock.json beta --reachable
 {"name": "beta", "direct": false, "parents": ["alpha"]}
 $ python -m depinventory ancestors sample-lock.json leaf
 {"name": "leaf", "ancestors": ["alpha", "beta", "orphan"]}
+$ python -m depinventory ancestors sample-lock.json leaf --reachable
+{"name": "leaf", "ancestors": ["alpha", "beta"]}
 $ python -m depinventory ancestors sample-lock.json isolated
 {"name": "isolated", "ancestors": []}
 $ python -m depinventory diff demo-lock.json new-lock.json
