@@ -194,7 +194,43 @@ def reachable_items(root_deps, packages_map):
     ]
 
 
-def sbom_document(root_deps, packages_map, reachable=False):
+def _build_root_paths(root_deps, packages_map):
+    """一次 BFS 得到全部包相对根标记 $root 的最短路径。
+
+    与省略 --from 的 find_path 同源同序：第一层按 sorted(root_deps)
+    播种，其余各层按 sorted(deps) 扩展（规则见 _shortest_path），parent
+    首次命中即边数最少且包名序列 Unicode 码点字典序最小的路径；根不可
+    达的包不在结果中（调用方以 [] 补齐）。直接依赖只含根标记与包名，
+    作用域包是单个路径元素，自环、循环与共享依赖由 parent 表保证每个
+    节点只处理一次。只读，不修改 root_deps、packages_map 及其内的
+    deps 列表。
+    """
+    parent = {}
+    queue = deque()
+    for name in sorted(root_deps):
+        if name not in parent:
+            parent[name] = None
+            queue.append(name)
+    while queue:
+        node = queue.popleft()
+        for dep in sorted(packages_map[node]["deps"]):
+            if dep not in parent:
+                parent[dep] = node
+                queue.append(dep)
+
+    paths = {}
+    for name in parent:
+        path = [name]
+        predecessor = parent[name]
+        while predecessor is not None:
+            path.append(predecessor)
+            predecessor = parent[predecessor]
+        path.reverse()
+        paths[name] = [ROOT] + path
+    return paths
+
+
+def sbom_document(root_deps, packages_map, reachable=False, with_paths=False):
     """生成简化 SBOM 文档（产品自有格式，不声明符合其他 SBOM 标准）。
 
     顶层仅含 format、formatVersion、components。默认 components 覆盖全部
@@ -207,14 +243,27 @@ def sbom_document(root_deps, packages_map, reachable=False):
     securityStatus 固定为 "unknown"，未知不代表没有风险，也不根据版本
     推断安全结论。循环依赖不影响结果：组件来自 packages_map 本身，天然
     不重复。
+
+    with_paths 为 True（CLI 的 --with-paths）时，每个组件在既有六个字段
+    之外再附带 path 数组；省略或为 False 时输出字段与本函数旧结果完全
+    一致。path 与同一输入省略 --from 的 why 查询一致：自 "$root" 开始、
+    到组件完整包名结束，只沿 dependencies 取边数最少的路径，等长时按
+    包名序列的 Unicode 码点字典序取第一条；直接依赖只经过根标记与包名。
+    已安装但根不可达的组件（完整导出保留、reachable 筛选后不存在）path
+    为 []，作用域包作为单个路径元素，自环、循环与共享依赖正常结束且每
+    个组件只出现一次；路径选择不受条目与依赖声明顺序影响。可达路径只做
+    一次 BFS 统一计算，不修改入参。
     """
     if reachable:
         names = reachable_names(root_deps, packages_map)
     else:
         names = packages_map.keys()
+    ordered = sorted(names)
     direct = set(root_deps)
-    components = [
-        {
+    paths = _build_root_paths(root_deps, packages_map) if with_paths else None
+    components = []
+    for name in ordered:
+        component = {
             "name": name,
             "version": packages_map[name]["version"],
             "ecosystem": "npm",
@@ -222,8 +271,9 @@ def sbom_document(root_deps, packages_map, reachable=False):
             "license": "unknown",
             "securityStatus": "unknown",
         }
-        for name in sorted(names)
-    ]
+        if with_paths:
+            component["path"] = paths.get(name, [])
+        components.append(component)
     return {
         "format": "depinventory-sbom",
         "formatVersion": 1,

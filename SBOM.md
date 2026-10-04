@@ -1,23 +1,24 @@
 # 简化 SBOM 导出说明
 
-本文档说明 `sbom` 命令（含 `--reachable` 筛选选项）与 `sbom_document`
-函数的行为。导出结果为产品自有格式，**不声明符合 CycloneDX 或
-SPDX** 等任何标准 SBOM 规范。
+本文档说明 `sbom` 命令（含 `--reachable` 筛选与 `--with-paths` 路径
+选项）与 `sbom_document` 函数的行为。导出结果为产品自有格式，**不声明
+符合 CycloneDX 或 SPDX** 等任何标准 SBOM 规范。
 
 ## 数据流与源码对应关系
 
 ```text
 锁文件（本地 JSON）
-   │  python -m depinventory sbom <lockfile> [--reachable]
+   │  python -m depinventory sbom <lockfile> [--reachable] [--with-paths]
    ▼
 load_lockfile(path)                      depinventory/lockfile.py
    │  读取并校验，返回 (root_deps, packages_map)；
    │  任何读取、解析或结构问题抛 InputError
    ▼
-sbom_document(root_deps, packages_map, reachable=False)
+sbom_document(root_deps, packages_map, reachable=False, with_paths=False)
                                          depinventory/lockfile.py
    │  纯函数：由已校验数据生成组件列表，返回 SBOM 文档字典；
-   │  带 --reachable 时以 reachable=True 调用，只保留可达组件
+   │  带 --reachable 时以 reachable=True 调用，只保留可达组件；
+   │  带 --with-paths 时以 with_paths=True 调用，为每个组件附加 path
    ▼
 main()                                   depinventory/__main__.py
    │  json.dumps(..., ensure_ascii=False) 后写入标准输出，末尾加一个换行
@@ -68,6 +69,27 @@ main()                                   depinventory/__main__.py
 | `direct` | 仅取决于根节点 `dependencies` 是否声明该包，与其他包的依赖关系无关 |
 | `license` | 固定为 `"unknown"`；即使输入附带许可证信息也不解读 |
 | `securityStatus` | 固定为 `"unknown"`；未知不代表没有风险，也不依据版本推断安全结论 |
+| `path` | **仅在 `--with-paths`（`with_paths=True`）时出现**：自 `"$root"` 到组件完整包名的最短依赖路径 |
+
+### `path` 的语义
+
+仅当命令带 `--with-paths`（函数以 `with_paths=True` 调用）时，每个组件
+在上述六个字段之后再附带一个 `path` 字段；省略该选项时组件对象不含
+`path`，输出与旧版本逐字段一致。
+
+- 路径与同一输入**省略 `--from` 的 `why` 查询完全一致**：从 `"$root"`
+  开始，到组件的完整包名结束，只沿各条目 `dependencies` 声明的边取
+  **边数最少**的路径；等长时按整条包名序列的 **Unicode 码点字典序**取
+  第一条；
+- 根直接依赖的路径只经过根标记和包名本身，如 `["$root", "alpha"]`；
+- 作用域包名整体作为**单个路径元素**（`["$root", "@scope/pkg", ...]`）；
+- 已安装但根不可达的组件（完整导出仍保留这类组件）`path` 为 `[]`；
+  与 `--reachable` 组合时仅为筛选后保留的组件附加路径，不可达组件已被
+  筛选排除；
+- 自环、循环和共享依赖正常结束：每个组件在 `components` 中只出现一次，
+  多条路径引入的同一包只得到一条最短路径；
+- 路径的选择与组件排序都不受 packages 条目顺序和 `dependencies` 声明
+  顺序影响；名称、版本原样保留，`direct` 的含义不因该选项改变。
 
 ## 本地演示
 
@@ -97,6 +119,32 @@ $ python -m depinventory sbom new-lock.json --reachable
 {"format": "depinventory-sbom", "formatVersion": 1, "components": [{"name": "beta", "version": "2.1.0", "ecosystem": "npm", "direct": true, "license": "unknown", "securityStatus": "unknown"}]}
 ```
 
+带 `--with-paths` 时每个组件额外携带 `path`。`demo-lock.json` 中
+`alpha` 是根直接依赖，`beta` 经 `alpha` 传递引入：
+
+```sh
+$ python -m depinventory sbom demo-lock.json --with-paths
+{"format": "depinventory-sbom", "formatVersion": 1, "components": [{"name": "alpha", "version": "1.0.0", "ecosystem": "npm", "direct": true, "license": "unknown", "securityStatus": "unknown", "path": ["$root", "alpha"]}, {"name": "beta", "version": "2.0.0", "ecosystem": "npm", "direct": false, "license": "unknown", "securityStatus": "unknown", "path": ["$root", "alpha", "beta"]}]}
+```
+
+`new-lock.json` 中 `beta` 是根直接依赖，`gamma` 已安装但根不可达，
+其 `path` 为 `[]`：
+
+```sh
+$ python -m depinventory sbom new-lock.json --with-paths
+{"format": "depinventory-sbom", "formatVersion": 1, "components": [{"name": "beta", "version": "2.1.0", "ecosystem": "npm", "direct": true, "license": "unknown", "securityStatus": "unknown", "path": ["$root", "beta"]}, {"name": "gamma", "version": "3.0.0", "ecosystem": "npm", "direct": false, "license": "unknown", "securityStatus": "unknown", "path": []}]}
+```
+
+`--with-paths` 与 `--reachable` 可组合：只保留可达组件并为其附加路径，
+上例只剩 `beta`：
+
+```sh
+$ python -m depinventory sbom new-lock.json --with-paths --reachable
+{"format": "depinventory-sbom", "formatVersion": 1, "components": [{"name": "beta", "version": "2.1.0", "ecosystem": "npm", "direct": true, "license": "unknown", "securityStatus": "unknown", "path": ["$root", "beta"]}]}
+```
+
+只有根节点时 `components` 仍为 `[]`，不受 `--with-paths` 影响。
+
 ## 成功与失败的输出约定
 
 成功时：
@@ -108,12 +156,16 @@ $ python -m depinventory sbom new-lock.json --reachable
 失败时（`load_lockfile` 抛 `InputError` 的情形）：文件不可读、非法
 UTF-8、JSON 损坏、缺少包版本、悬空依赖、嵌套路径或 `link: true` 条目，
 命令退出码为 `2`，标准输出为空，标准错误仅含 `INPUT_ERROR` 和一个换行，
-不输出部分结果或堆栈。带 `--reachable` 时同样在筛选前校验整份输入：
-不可达条目的缺失版本、非法 `dependencies` 或悬空依赖也导致整体失败。
+不输出部分结果或堆栈。带 `--reachable` 或 `--with-paths` 时同样在筛选、
+附路径前校验整份输入：不可达条目的缺失版本、非法 `dependencies` 或悬空
+依赖也导致整体失败。
 
 ## 兼容性
 
 `sbom` 为只读入口：`sbom_document(root_deps, packages_map)` 的两参数
-调用及结果保持不变，`--reachable` 只缩小 `components` 范围，不改变文档
-格式与字段含义；现有样例文件及 `list`、`why`、`why --from`、`diff`
-的接口与结果均保持不变。
+调用及结果保持不变，`--reachable` 只缩小 `components` 范围，`--with-paths`
+只在带该选项时为组件增加 `path` 字段，均不改变文档格式与既有字段含义；
+`reachable` 的位置参数与关键字调用（`sbom_document(rd, pm, True)`、
+`sbom_document(rd, pm, reachable=True)`）继续有效，`with_paths` 默认
+`False`。现有样例文件及 `list`、`why`、`why --from`、`diff` 的接口与
+结果均保持不变。导出只读：不改写输入文件、不联网、不安装或执行依赖。
