@@ -260,7 +260,10 @@ def _build_root_paths(root_deps, packages_map):
     return {name: [ROOT] + _reconstruct_path(parent, name) for name in parent}
 
 
-def sbom_document(root_deps, packages_map, reachable=False, with_paths=False):
+def sbom_document(
+    root_deps, packages_map, reachable=False, with_paths=False,
+    with_dependencies=False,
+):
     """生成简化 SBOM 文档（产品自有格式，不声明符合其他 SBOM 标准）。
 
     顶层仅含 format、formatVersion、components。默认 components 覆盖全部
@@ -283,6 +286,16 @@ def sbom_document(root_deps, packages_map, reachable=False, with_paths=False):
     为 []，作用域包作为单个路径元素，自环、循环与共享依赖正常结束且每
     个组件只出现一次；路径选择不受条目与依赖声明顺序影响。可达路径只做
     一次 BFS 统一计算，不修改入参。
+
+    with_dependencies 为 True（CLI 的 --with-dependencies）时，每个组件
+    再附带 dependencies 数组：该包条目 dependencies 直接声明的完整包名，
+    不展开传递依赖、不附带版本范围，也不从其他元数据补边；按完整包名
+    Unicode 码点升序排列并去重，区分大小写，作用域包名作为整体保留；
+    声明省略或为空时输出 []。自环保留自身，循环双方分别保留各自的声明。
+    与 reachable 组合时仅为筛选后保留的组件附加该数组，被排除组件的
+    关系不影响保留组件的数组内容；与 with_paths 可同时启用，互不影响。
+    省略或为 False 时组件不含 dependencies 字段，输出与旧结果完全一致。
+    只读，不修改入参。
     """
     if reachable:
         names = reachable_names(root_deps, packages_map)
@@ -301,6 +314,10 @@ def sbom_document(root_deps, packages_map, reachable=False, with_paths=False):
             "license": "unknown",
             "securityStatus": "unknown",
         }
+        if with_dependencies:
+            # 只取该条目直接声明的包名：去重后按 Unicode 码点升序，
+            # 自环与循环声明原样保留，不展开传递依赖。
+            component["dependencies"] = sorted(set(packages_map[name]["deps"]))
         if with_paths:
             component["path"] = paths.get(name, [])
         components.append(component)
