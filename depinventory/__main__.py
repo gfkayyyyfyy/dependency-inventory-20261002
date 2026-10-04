@@ -17,6 +17,7 @@ from .lockfile import (
     reachable_items,
     reachable_names,
     sbom_document,
+    unreachable_items,
 )
 
 _INPUT_ERROR = "INPUT_ERROR"
@@ -36,6 +37,12 @@ def _build_parser():
         "--reachable",
         action="store_true",
         help="只列出自根节点沿 dependencies 可达的条目；省略时输出完整清单。",
+    )
+    list_parser.add_argument(
+        "--unreachable",
+        action="store_true",
+        help="只列出自根节点沿 dependencies 不可达的条目；"
+        "与 --reachable 互斥，同时出现按输入错误处理。",
     )
 
     why_parser = subparsers.add_parser(
@@ -134,6 +141,15 @@ def main(argv=None):
     parser = _build_parser()
     args = parser.parse_args(argv)
 
+    # --reachable 与 --unreachable 互斥：在读取任何文件前按输入错误拒绝。
+    if (
+        args.command == "list"
+        and getattr(args, "reachable", False)
+        and getattr(args, "unreachable", False)
+    ):
+        print(_INPUT_ERROR, file=sys.stderr)
+        return 2
+
     try:
         if args.command == "diff":
             before_root, before_map = load_lockfile(args.before)
@@ -152,6 +168,8 @@ def main(argv=None):
         if args.command == "list":
             if args.reachable:
                 result = reachable_items(root_deps, packages_map)
+            elif args.unreachable:
+                result = unreachable_items(root_deps, packages_map)
             else:
                 result = list_items(root_deps, packages_map)
         elif args.command == "sbom":

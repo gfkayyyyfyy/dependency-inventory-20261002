@@ -14,6 +14,9 @@ python -m depinventory list demo-lock.json
 # 只列出自根节点沿 dependencies 可达的条目
 python -m depinventory list demo-lock.json --reachable
 
+# 只列出自根节点沿 dependencies 不可达的条目
+python -m depinventory list sample-lock.json --unreachable
+
 # 查询某包自根节点的最短依赖来源路径（区分大小写的完整包名）
 python -m depinventory why demo-lock.json beta
 
@@ -49,6 +52,13 @@ python -m depinventory diff demo-lock.json new-lock.json --reachable
 循环正常结束并保留相关包，完全脱离根节点的包（含与根断开的循环）整体
 排除。可达性只看 `dependencies`，不解析版本范围，也不从其他元数据补充
 连边；省略该选项时输出原有完整清单。
+
+带 `--unreachable` 时改为只保留不可达的包：全部已安装包中不属于上述可达
+集合的条目，`direct` 均为 `false`；与根断开的自环和循环中的包全部保留，
+不可达包即使声明了某个可达包也不会因此变为可达。根 `dependencies` 省略
+或为空时全部已安装包都在结果中；只有根节点或所有安装包均可达时输出
+`[]`。`--reachable` 与 `--unreachable` 互斥，同时出现按输入错误处理
+（退出码 2，标准错误仅 `INPUT_ERROR`），且在读取文件前拒绝。
 
 `why` 输出仅含 `name` 和 `path` 的 JSON 对象；`path` 为从 `$root` 到目标的
 包名数组，取边数最少的路径，同长度按包名序列的 Unicode 码点字典序取第一条。
