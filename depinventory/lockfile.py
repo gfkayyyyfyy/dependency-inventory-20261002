@@ -367,3 +367,42 @@ def find_parents(root_deps, packages_map, target):
         if target in info["deps"]
     }
     return {"direct": target in root_deps, "parents": sorted(parents)}
+
+
+def find_ancestors(root_deps, packages_map, target):
+    """返回 target 的全部上游：沿 dependencies 至少一条边能到达 target 的包名。
+
+    target 不存在抛 NotFoundError。
+
+    祖先是沿自身 dependencies 经过至少一条边（传递展开，不限直接边）
+    能到达 target 的全部已安装包；根项目与目标自身始终排除——即使自环
+    或循环让目标重新到达自身，也不把目标列入结果。查询覆盖整份清单，
+    包括自根节点不可达的包：与根断开的包只要能到达目标同样进入结果。
+    结果按完整包名 Unicode 码点升序排列并去重，不受条目与依赖声明顺序
+    影响。自环与其他循环由 seen 集合保证每个节点只扩展一次，正常结束；
+    循环中能到达目标的其他包保留。已安装但没有其他上游的目标返回空列表。
+
+    关系只取 dependencies，不解析版本范围，也不从其他字段补边。
+    root_deps 仅为与其他查询函数保持一致的签名而保留，根项目本就不在
+    packages_map 中，天然不会成为祖先。不修改 root_deps、packages_map
+    及其内的 deps 列表。
+    """
+    if target not in packages_map:
+        raise NotFoundError(target)
+    # 反向 BFS：先建 dep -> 声明者 的反向邻接，自 target 沿反向边访问到
+    # 的每个节点，沿正向 dependencies 都能到达 target。
+    reverse = {}
+    for name, info in packages_map.items():
+        for dep in info["deps"]:
+            reverse.setdefault(dep, []).append(name)
+    seen = {target}
+    queue = deque(reverse.get(target, ()))
+    ancestors = []
+    while queue:
+        name = queue.popleft()
+        if name in seen:
+            continue
+        seen.add(name)
+        ancestors.append(name)
+        queue.extend(reverse.get(name, ()))
+    return sorted(ancestors)

@@ -26,6 +26,9 @@ python -m depinventory parents demo-lock.json beta
 # 只列出根依赖链内的直接上游（parents 成员按根可达性筛选）
 python -m depinventory parents parents-lock.json beta --reachable
 
+# 查询某包的全部上游（沿 dependencies 至少一条边能到达它的已安装包）
+python -m depinventory ancestors sample-lock.json leaf
+
 # 比较两份清单的版本差异（参数顺序决定方向：旧清单在前）
 python -m depinventory diff demo-lock.json new-lock.json
 
@@ -71,6 +74,17 @@ python -m depinventory diff demo-lock.json new-lock.json --reachable
 目标仍成功返回 `direct` 为 `false`、`parents` 为 `[]`。筛选不放宽整份
 校验，不可达包的结构错误同样使整份输入失败。省略该选项时行为不变。
 
+`ancestors` 输出仅含 `name` 和 `ancestors` 的 JSON 对象；`name` 原样保留
+查询名。`ancestors` 是沿自身 `dependencies` 经过至少一条边（传递展开，
+不限直接边）能到达目标的全部已安装包名，按完整包名 Unicode 码点升序
+排列并去重，不受条目与依赖声明顺序影响。关系只取 `dependencies`，不解析
+版本范围，也不从其他字段补边。根项目与目标自身始终排除——自环或循环让
+目标重新到达自身也不列入；查询覆盖整份清单，包括从根节点不可达的包，
+循环中能到达目标的其他包保留。已安装但没有其他上游的目标成功返回空
+数组。包名按区分大小写的完整名匹配（支持 `@scope/name`），字面值
+`$root` 仍表示名为 `$root` 的普通已安装包；目标未安装时以 `NOT_FOUND`
+失败。
+
 `diff` 输出 JSON 数组，每项仅含 `name`、`change`、`before`、`after`。
 比较两份清单的全部已安装条目（含根节点不可达的包，不含根项目）：
 仅新清单存在的标记 `added`（`before` 为 `null`），仅旧清单存在的标记
@@ -106,7 +120,7 @@ python -m depinventory diff demo-lock.json new-lock.json --reachable
 | 退出码 | 含义 | 标准错误 |
 | --- | --- | --- |
 | 0 | 成功 | — |
-| 1 | 查询的包不存在（`why`、`parents`） | `NOT_FOUND` |
+| 1 | 查询的包不存在（`why`、`parents`、`ancestors`） | `NOT_FOUND` |
 | 2 | 输入错误（文件不可读、JSON 损坏、结构/版本字段无效、悬空依赖、不支持的结构） | `INPUT_ERROR` |
 
 `diff` 的两份输入都遵循同一套校验规则，任一文件无效即整体失败。
@@ -134,6 +148,10 @@ $ python -m depinventory parents parents-lock.json beta
 {"name": "beta", "direct": false, "parents": ["alpha", "orphan"]}
 $ python -m depinventory parents parents-lock.json beta --reachable
 {"name": "beta", "direct": false, "parents": ["alpha"]}
+$ python -m depinventory ancestors sample-lock.json leaf
+{"name": "leaf", "ancestors": ["alpha", "beta", "orphan"]}
+$ python -m depinventory ancestors sample-lock.json isolated
+{"name": "isolated", "ancestors": []}
 $ python -m depinventory diff demo-lock.json new-lock.json
 [{"name": "alpha", "change": "removed", "before": "1.0.0", "after": null}, {"name": "beta", "change": "changed", "before": "2.0.0", "after": "2.1.0"}, {"name": "gamma", "change": "added", "before": null, "after": "3.0.0"}]
 $ python -m depinventory diff demo-lock.json new-lock.json --reachable
@@ -144,3 +162,6 @@ $ python -m depinventory diff demo-lock.json new-lock.json --reachable
 `demo-lock.json` 的演进版：根依赖改为 `beta@2.1.0`，移除 `alpha`，并加入
 未被引用的 `gamma@3.0.0`。`parents-lock.json` 中根仅声明 `alpha@1.0.0`，
 `alpha` 与未被根引用的 `orphan` 都声明 `beta@1.0.0`（声明值均为 `*`）。
+`sample-lock.json` 中根仅声明 `alpha`，`alpha` 依赖 `beta`，`beta` 与
+`leaf` 互相依赖，未被根引用的 `orphan` 依赖 `leaf`，`isolated` 没有任何
+依赖（版本均为 `1.0.0`，声明值均为 `*`）。
