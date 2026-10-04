@@ -370,6 +370,35 @@ def find_parents(root_deps, packages_map, target):
     return {"direct": target in root_deps, "parents": sorted(parents)}
 
 
+def _traverse_relatives(neighbors, start):
+    """自 start 沿 neighbors 给出的连边 BFS，统一维护两项关系查询的规则。
+
+    neighbors(node) 返回 node 的下一跳节点序列（两个查询分别传正向
+    dependencies 与反向“声明者”邻接）。下列规则只在此处维护一次：
+
+    - 去重与循环终止：seen 集合保证每个节点至多入队、扩展一次，自环、
+      断开的循环与多路径汇合都正常结束；
+    - 排除起点与至少一条边：start 预先放入 seen，第一层直接取 start 的
+      邻居（即已经过一条边），故 start 自身即使经自环或循环重新到达也
+      不会进入结果，且结果中的成员都距 start 至少一条边；
+    - 排序：返回前按完整包名的 Unicode 码点统一排序，结果与邻居序列的
+      声明顺序无关（BFS 仅决定访问，不决定输出次序）。
+
+    不修改 neighbors 背后的 packages_map 及其内的 deps 列表。
+    """
+    seen = {start}
+    queue = deque(neighbors(start))
+    members = []
+    while queue:
+        name = queue.popleft()
+        if name in seen:
+            continue
+        seen.add(name)
+        members.append(name)
+        queue.extend(neighbors(name))
+    return sorted(members)
+
+
 def find_ancestors(root_deps, packages_map, target):
     """返回 target 的全部上游：沿 dependencies 至少一条边能到达 target 的包名。
 
@@ -385,8 +414,9 @@ def find_ancestors(root_deps, packages_map, target):
 
     关系只取 dependencies，不解析版本范围，也不从其他字段补边。
     root_deps 仅为与其他查询函数保持一致的签名而保留，根项目本就不在
-    packages_map 中，天然不会成为祖先。不修改 root_deps、packages_map
-    及其内的 deps 列表。
+    packages_map 中，天然不会成为祖先。去重、循环终止、目标自身排除与
+    排序规则由 _traverse_relatives 统一维护，本函数只提供反向邻接。
+    不修改 root_deps、packages_map 及其内的 deps 列表。
     """
     if target not in packages_map:
         raise NotFoundError(target)
@@ -396,17 +426,7 @@ def find_ancestors(root_deps, packages_map, target):
     for name, info in packages_map.items():
         for dep in info["deps"]:
             reverse.setdefault(dep, []).append(name)
-    seen = {target}
-    queue = deque(reverse.get(target, ()))
-    ancestors = []
-    while queue:
-        name = queue.popleft()
-        if name in seen:
-            continue
-        seen.add(name)
-        ancestors.append(name)
-        queue.extend(reverse.get(name, ()))
-    return sorted(ancestors)
+    return _traverse_relatives(lambda name: reverse.get(name, ()), target)
 
 
 def find_descendants(root_deps, packages_map, target):
@@ -425,21 +445,12 @@ def find_descendants(root_deps, packages_map, target):
 
     关系只取 dependencies，不解析版本范围，也不从其他字段补边。
     root_deps 仅为与其他查询函数保持一致的签名而保留，根项目本就不在
-    packages_map 中，天然不会成为下游。不修改 root_deps、packages_map
-    及其内的 deps 列表。
+    packages_map 中，天然不会成为下游。去重、循环终止、目标自身排除与
+    排序规则由 _traverse_relatives 统一维护，本函数只提供正向邻接。
+    不修改 root_deps、packages_map 及其内的 deps 列表。
     """
     if target not in packages_map:
         raise NotFoundError(target)
-    # 正向 BFS：自 target 的直接依赖出发沿 dependencies 逐层扩展，
-    # target 预先放入 seen，保证自环与循环不会把 target 自身计入结果。
-    seen = {target}
-    queue = deque(packages_map[target]["deps"])
-    descendants = []
-    while queue:
-        name = queue.popleft()
-        if name in seen:
-            continue
-        seen.add(name)
-        descendants.append(name)
-        queue.extend(packages_map[name]["deps"])
-    return sorted(descendants)
+    # 正向 BFS：自 target 的直接依赖出发沿 dependencies 逐层扩展；
+    # 起点排除、去重、循环终止与排序由 _traverse_relatives 统一处理。
+    return _traverse_relatives(lambda name: packages_map[name]["deps"], target)
