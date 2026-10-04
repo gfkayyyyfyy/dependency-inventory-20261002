@@ -1,4 +1,4 @@
-"""命令行入口：python -m depinventory list|why|parents|diff|sbom <lockfile> [参数]。"""
+"""命令行入口：python -m depinventory list|why|parents|ancestors|diff|sbom <lockfile> [参数]。"""
 
 import argparse
 import json
@@ -8,6 +8,7 @@ from .lockfile import (
     InputError,
     NotFoundError,
     diff_items,
+    find_ancestors,
     find_path,
     find_parents,
     list_items,
@@ -61,6 +62,12 @@ def _build_parser():
         help="parents 只保留自根节点沿 dependencies 可达的直接上游；"
         "省略时列出整份清单中的全部直接上游。",
     )
+
+    ancestors_parser = subparsers.add_parser(
+        "ancestors", help="查询目标包的全部上游（沿 dependencies 能到达它的所有包）"
+    )
+    ancestors_parser.add_argument("lockfile", help="package-lock.json 路径")
+    ancestors_parser.add_argument("name", help="按区分大小写的完整包名查询")
 
     diff_parser = subparsers.add_parser("diff", help="比较两份清单的版本差异")
     diff_parser.add_argument("before", help="旧清单 package-lock.json 路径")
@@ -129,6 +136,11 @@ def main(argv=None):
                     if name in after_keep
                 }
             result = diff_items(before_map, after_map)
+        elif args.command == "ancestors":
+            result = {
+                "name": args.name,
+                "ancestors": find_ancestors(packages_map, args.name),
+            }
         elif args.command == "parents":
             found = find_parents(root_deps, packages_map, args.name)
             parents = found["parents"]

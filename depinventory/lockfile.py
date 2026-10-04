@@ -343,6 +343,43 @@ def find_path(root_deps, packages_map, target, source=None):
     return _shortest_path([source], packages_map, target)
 
 
+def find_ancestors(packages_map, target):
+    """返回 target 的全部上游包名列表（沿 dependencies 至少一条边可达目标）。
+
+    target 不存在抛 NotFoundError。
+
+    结果是沿 dependencies 反向逐层扩展得到的全部已安装包名：只要某包
+    经一条或多条依赖边能到达 target 即进入结果，包括自根节点不可达的包。
+    根项目不是 packages_map 成员，天然排除；target 自身始终排除，即使它
+    经自环或循环能到达自身。结果按完整包名 Unicode 码点升序排列并去重，
+    不受条目与依赖声明顺序影响。循环由 seen 集合保证每个节点只扩展一次，
+    正常结束；循环中能到达 target 的其他包照常保留。已安装但没有其他
+    上游的 target 返回空列表。
+
+    关系只取 dependencies，不解析版本范围，也不从其他字段补边。
+    不修改 packages_map 及其内的 deps 列表。
+    """
+    if target not in packages_map:
+        raise NotFoundError(target)
+    # 反向邻接表：dep -> 直接声明它的全部包。依赖声明已在加载时校验，
+    # 键必然存在于 packages_map。
+    declared_by = {name: [] for name in packages_map}
+    for name, info in packages_map.items():
+        for dep in info["deps"]:
+            declared_by[dep].append(name)
+    seen = {target}
+    queue = deque([target])
+    while queue:
+        node = queue.popleft()
+        for parent in declared_by[node]:
+            if parent not in seen:
+                seen.add(parent)
+                queue.append(parent)
+    # 目标自身始终排除：自环或循环回到 target 也不让它进入结果。
+    seen.discard(target)
+    return sorted(seen)
+
+
 def find_parents(root_deps, packages_map, target):
     """返回 target 的直接上游：{"direct": 是否根声明, "parents": [包名]}。
 
