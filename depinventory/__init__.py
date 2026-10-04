@@ -14,6 +14,7 @@ from .lockfile import (
     reachable_items,
     reachable_names,
     sbom_document,
+    unreachable_items,
 )
 
 __all__ = [
@@ -30,4 +31,5 @@ __all__ = [
     "reachable_items",
     "reachable_names",
     "sbom_document",
+    "unreachable_items",
 ]

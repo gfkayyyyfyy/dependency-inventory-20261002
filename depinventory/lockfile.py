@@ -194,6 +194,23 @@ def reachable_items(root_deps, packages_map):
     ]
 
 
+def unreachable_items(root_deps, packages_map):
+    """返回已安装但自根节点沿 dependencies 不可达的条目（不含根节点）。
+
+    可达集合与 reachable_names 完全同源；本函数输出其补集：全部已安装包
+    中不属于可达集合的条目，按完整包名 Unicode 码点升序排列并去重。不可达
+    包即使依赖某个可达包，也不会因此被视为可达；与根断开的自环和循环中的
+    包全部保留。direct 含义不变（根 dependencies 是否直接声明该包），不可
+    达集合中均为 False。根 dependencies 省略或为空时全部安装包都在结果中。
+    """
+    seen = reachable_names(root_deps, packages_map)
+    return [
+        {"name": name, "version": packages_map[name]["version"], "direct": False}
+        for name in sorted(packages_map.keys())
+        if name not in seen
+    ]
+
+
 def _bfs_parents(starts, packages_map, target=None):
     """统一的依赖图 BFS：返回各节点首次被发现时的前驱表。
 
