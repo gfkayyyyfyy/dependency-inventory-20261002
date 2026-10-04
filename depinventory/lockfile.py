@@ -4,6 +4,10 @@
 - UTF-8 编码的严格 JSON：Python json 默认接受的非标准数值常量
   NaN、Infinity、-Infinity 一律拒绝（出现在任意层级的值位置，
   即使落在不参与分析的元数据中）；字符串内的同名文本不受影响；
+- 同一个 JSON 对象内出现两个解码后完全相同的键一律拒绝（即使两个值
+  相同）：覆盖顶层、packages、根条目、各包条目、dependencies、额外
+  元数据以及数组内的对象，根不可达包内的重复键同样使整份输入失败；
+  重复只在同一对象内判断，不同对象各自的同名键合法；
 - lockfileVersion 为整数 3；
 - packages 为对象，且含空串 "" 根节点；
 - 根节点及每个包条目均为对象；
@@ -43,6 +47,28 @@ def _reject_json_constant(value):
     # ValueError 即可整份拒绝，由 json.loads 原样向上传播。合法但超出
     # 浮点范围的数字文本（如 1e999）走数字解析路径返回 inf，不会到这里。
     raise ValueError("non-standard JSON constant: " + value)
+
+
+def _reject_duplicate_keys(pairs):
+    # object_pairs_hook 对解析出的每个 JSON 对象回调一次（顶层、
+    # packages、根条目、包条目、dependencies、额外元数据及数组内对象
+    # 全覆盖），pairs 保留重复键的每一次出现，且键名已经按 JSON 字符串
+    # 规则解码完成。故只在同一个对象内部比对：出现两个完全相同的键即抛
+    # ValueError 整份拒绝，即使两个值相同也拒绝；不同对象各有同名键互不
+    # 影响。按解码后的完整文本区分大小写直接比较，不做 Unicode 规范化
+    # （JSON 键 "alpha" 与 "alpha" 的转义写法——首字母 a 写成
+    # 反斜杠 u0061——解码后相同，算重复；"alpha" 与 "Alpha" 不算）；
+    # 字符串值里的同文文本根本不是键，不参与判断。json 解析器先
+    # 回调内层对象、后回调外层对象，故根不可达包内、不参与分析的元数据
+    # 中的重复键同样在此被拦下，--reachable 等筛选发生在加载成功之后，
+    # 无法绕过。异常经 json.loads 原样向上传播，由加载入口统一包成
+    # InputError，不返回部分数据。
+    seen = set()
+    for key, _value in pairs:
+        if key in seen:
+            raise ValueError("duplicate JSON object key")
+        seen.add(key)
+    return dict(pairs)
 
 
 def _entry_name(key):
@@ -95,8 +121,15 @@ def load_lockfile(path):
     try:
         # parse_constant 在解析阶段拒绝裸 NaN/Infinity/-Infinity，无论其
         # 位于根、包条目还是任意层级的忽略元数据中；字符串与 1e999 等
-        # 合法数字文本不触发该回调，故仍可读取。
-        data = json.loads(text, parse_constant=_reject_json_constant)
+        # 合法数字文本不触发该回调，故仍可读取。object_pairs_hook 在同一
+        # 解析阶段拒绝任何对象内的重复键（重复对仍完整保留在 pairs 中，
+        # 键已解码），覆盖范围与可达性筛选无关。两者抛出的 ValueError
+        # 都在此统一转为 InputError。
+        data = json.loads(
+            text,
+            parse_constant=_reject_json_constant,
+            object_pairs_hook=_reject_duplicate_keys,
+        )
     except (json.JSONDecodeError, ValueError) as exc:
         raise InputError("invalid JSON") from exc
 
