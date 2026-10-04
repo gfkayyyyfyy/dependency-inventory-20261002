@@ -22,6 +22,12 @@ ROOT = "$root"
 _ROOT_KEY = ""
 _PACKAGES_PREFIX = "node_modules/"
 
+# Package URL 中允许原样出现的 ASCII 字节：字母、数字与 - . _ ~。
+# 其余字节一律按 UTF-8 百分号编码；结构分隔符 / 与 @ 不经过此函数。
+_PURL_UNRESERVED = frozenset(
+    b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~"
+)
+
 
 class InputError(Exception):
     """锁文件不可读、不是合法 UTF-8、JSON 损坏或结构不受支持。"""
@@ -260,9 +266,45 @@ def _build_root_paths(root_deps, packages_map):
     return {name: [ROOT] + _reconstruct_path(parent, name) for name in parent}
 
 
+def _purl_quote(fragment):
+    """对 PURL 的一个名称片段或版本做百分号编码。
+
+    按 UTF-8 字节编码：除 ASCII 字母、数字及 - . _ ~ 外的每个字节都写成
+    %XX，十六进制字母大写。空格、+、% 分别成为 %20、%2B、%25；输入中已
+    有的百分号文本原样视为字符 %（编码为 %25），不作任何解码。片段无法
+    按 UTF-8 编码（出现 lone surrogate）时抛 UnicodeEncodeError，由调用方
+    统一转为 InputError。
+    """
+    octets = fragment.encode("utf-8")
+    return "".join(
+        chr(byte) if byte in _PURL_UNRESERVED else "%{:02X}".format(byte)
+        for byte in octets
+    )
+
+
+def _npm_purl(name, version):
+    """由完整包名与原始版本生成 npm Package URL：pkg:npm/...@版本。
+
+    普通包为 pkg:npm/包名@版本；作用域包为 pkg:npm/作用域/包名@版本，
+    作用域含开头的 @（该 @ 与其他非保留字节一样被编码，如 %40scope），
+    作用域与包名之间的 / 及版本前的 @ 为结构分隔符，保留不编码。名称与
+    版本均取原始字符串：不解析版本范围、不改大小写，也不查其他元数据。
+    任一字符串无法按 UTF-8 编码时抛 InputError。
+    """
+    try:
+        if name.startswith("@"):
+            scope, pkg_name = name.split("/", 1)
+            path = _purl_quote(scope) + "/" + _purl_quote(pkg_name)
+        else:
+            path = _purl_quote(name)
+        return "pkg:npm/" + path + "@" + _purl_quote(version)
+    except UnicodeEncodeError as exc:
+        raise InputError("purl text cannot be encoded as UTF-8") from exc
+
+
 def sbom_document(
     root_deps, packages_map, reachable=False, with_paths=False,
-    with_dependencies=False,
+    with_dependencies=False, with_purl=False,
 ):
     """生成简化 SBOM 文档（产品自有格式，不声明符合其他 SBOM 标准）。
 
@@ -296,6 +338,21 @@ def sbom_document(
     关系不影响保留组件的数组内容；与 with_paths 可同时启用，互不影响。
     省略或为 False 时组件不含 dependencies 字段，输出与旧结果完全一致。
     只读，不修改入参。
+
+    with_purl 为 True（CLI 的 --with-purl）时，每个组件在既有字段之后
+    再附带字符串字段 purl，值由完整包名与原始版本生成：普通包为
+    pkg:npm/包名@版本，作用域包为 pkg:npm/作用域/包名@版本（作用域含
+    开头的 @，编码为 %40）。各名称片段与版本按 UTF-8 字节百分号编码，
+    仅保留 ASCII 字母、数字及 -._~，十六进制字母大写；结构分隔的 / 与 @
+    保留；空格、+、% 分别编码为 %20、%2B、%25，不解析输入中已有的百分号
+    文本。例如 alpha 1.0.0 为 pkg:npm/alpha@1.0.0，@scope/leaf 2.0.0 为
+    pkg:npm/%40scope/leaf@2.0.0。name 与 version 字段原样保留，不解析
+    版本范围、不改大小写，也不从其他元数据补充标识；与 reachable、
+    with_paths、with_dependencies 均可同时启用，互不影响，筛选、排序与
+    既有附加字段语义不变；根不可达的包（完整导出保留时）同样获得标识。
+    省略或为 False 时组件不含 purl 字段，输出与旧结果完全一致。名称或
+    版本无法按 UTF-8 编码（出现 lone surrogate）时抛 InputError。只读，
+    不修改入参。
     """
     if reachable:
         names = reachable_names(root_deps, packages_map)
@@ -320,6 +377,10 @@ def sbom_document(
             component["dependencies"] = sorted(set(packages_map[name]["deps"]))
         if with_paths:
             component["path"] = paths.get(name, [])
+        if with_purl:
+            # 仅由完整包名与原始版本生成，name/version 字段本身不动；
+            # 无法按 UTF-8 编码时 _npm_purl 抛 InputError，整份导出失败。
+            component["purl"] = _npm_purl(name, packages_map[name]["version"])
         components.append(component)
     return {
         "format": "depinventory-sbom",
