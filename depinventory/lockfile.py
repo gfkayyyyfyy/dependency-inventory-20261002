@@ -407,3 +407,39 @@ def find_ancestors(root_deps, packages_map, target):
         ancestors.append(name)
         queue.extend(reverse.get(name, ()))
     return sorted(ancestors)
+
+
+def find_descendants(root_deps, packages_map, target):
+    """返回 target 的全部下游：自 target 沿 dependencies 可达的包名。
+
+    target 不存在抛 NotFoundError。
+
+    下游是自 target 出发、沿其 dependencies 经过至少一条边（直接与传递
+    依赖都保留）能到达的全部已安装包；根项目与 target 自身始终排除——
+    自环或循环让遍历重新到达 target 也不把 target 列入结果。起点即使
+    从根节点不可达，也一律沿其自身 dependencies 展开；根 dependencies
+    省略或为空不改变该规则。结果按完整包名 Unicode 码点升序排列并去重，
+    同一包被多条路径引入只出现一次，不受条目与依赖声明顺序影响。自环与
+    其他循环由 seen 集合保证每个节点只扩展一次，正常结束；循环中其他
+    可达包保留。已安装但没有依赖的 target 成功返回空列表。
+
+    关系只取 dependencies，不解析版本范围，也不从其他字段补边。
+    root_deps 仅为与其他查询函数保持一致的签名而保留，根项目本就不在
+    packages_map 中，天然不会成为下游。不修改 root_deps、packages_map
+    及其内的 deps 列表。
+    """
+    if target not in packages_map:
+        raise NotFoundError(target)
+    # 正向 BFS：自 target 的直接依赖出发沿 dependencies 逐层扩展，
+    # target 预先放入 seen，保证自环与循环不会把 target 自身计入结果。
+    seen = {target}
+    queue = deque(packages_map[target]["deps"])
+    descendants = []
+    while queue:
+        name = queue.popleft()
+        if name in seen:
+            continue
+        seen.add(name)
+        descendants.append(name)
+        queue.extend(packages_map[name]["deps"])
+    return sorted(descendants)

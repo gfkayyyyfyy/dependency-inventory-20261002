@@ -32,6 +32,9 @@ python -m depinventory ancestors sample-lock.json leaf
 # 只列出根依赖链内的上游（ancestors 成员按根可达性筛选）
 python -m depinventory ancestors sample-lock.json leaf --reachable
 
+# 查询某包的全部下游（它沿 dependencies 带入的已安装包）
+python -m depinventory descendants sample-lock.json alpha
+
 # 比较两份清单的版本差异（参数顺序决定方向：旧清单在前）
 python -m depinventory diff demo-lock.json new-lock.json
 
@@ -97,6 +100,18 @@ python -m depinventory diff demo-lock.json new-lock.json --reachable
 成功返回空 `ancestors`。筛选不放宽整份校验，不可达包的结构错误同样使
 整份输入失败。省略该选项时行为不变。
 
+`descendants` 输出仅含 `name` 和 `descendants` 的 JSON 对象；`name` 原样
+保留查询名。`descendants` 是自查询包出发、沿其 `dependencies` 经过至少
+一条边（直接与传递依赖都保留）能到达的全部已安装包名，按完整包名
+Unicode 码点升序排列并去重，同一包被多条路径引入只出现一次，不受条目与
+依赖声明顺序影响。关系只取 `dependencies`，不解析版本范围，也不从其他
+字段补边。根项目与查询包自身始终排除——自环或循环让遍历重新到达查询包
+也不列入；起点即使从根节点不可达也按自身依赖展开，根 `dependencies`
+省略或为空不改变该规则；循环中其他可达包保留。已安装但没有依赖的查询包
+成功返回空数组。包名按区分大小写的完整名匹配（支持 `@scope/name`），
+字面值 `$root` 仍表示名为 `$root` 的普通已安装包；查询包未安装时以
+`NOT_FOUND` 失败。
+
 `diff` 输出 JSON 数组，每项仅含 `name`、`change`、`before`、`after`。
 比较两份清单的全部已安装条目（含根节点不可达的包，不含根项目）：
 仅新清单存在的标记 `added`（`before` 为 `null`），仅旧清单存在的标记
@@ -132,7 +147,7 @@ python -m depinventory diff demo-lock.json new-lock.json --reachable
 | 退出码 | 含义 | 标准错误 |
 | --- | --- | --- |
 | 0 | 成功 | — |
-| 1 | 查询的包不存在（`why`、`parents`、`ancestors`） | `NOT_FOUND` |
+| 1 | 查询的包不存在（`why`、`parents`、`ancestors`、`descendants`） | `NOT_FOUND` |
 | 2 | 输入错误（文件不可读、JSON 损坏、结构/版本字段无效、悬空依赖、不支持的结构） | `INPUT_ERROR` |
 
 `diff` 的两份输入都遵循同一套校验规则，任一文件无效即整体失败。
@@ -166,6 +181,10 @@ $ python -m depinventory ancestors sample-lock.json leaf --reachable
 {"name": "leaf", "ancestors": ["alpha", "beta"]}
 $ python -m depinventory ancestors sample-lock.json isolated
 {"name": "isolated", "ancestors": []}
+$ python -m depinventory descendants sample-lock.json alpha
+{"name": "alpha", "descendants": ["beta", "leaf"]}
+$ python -m depinventory descendants sample-lock.json orphan
+{"name": "orphan", "descendants": ["beta", "leaf"]}
 $ python -m depinventory diff demo-lock.json new-lock.json
 [{"name": "alpha", "change": "removed", "before": "1.0.0", "after": null}, {"name": "beta", "change": "changed", "before": "2.0.0", "after": "2.1.0"}, {"name": "gamma", "change": "added", "before": null, "after": "3.0.0"}]
 $ python -m depinventory diff demo-lock.json new-lock.json --reachable
