@@ -194,7 +194,7 @@ def reachable_items(root_deps, packages_map):
     ]
 
 
-def sbom_document(root_deps, packages_map, reachable=False):
+def sbom_document(root_deps, packages_map, reachable=False, with_paths=False):
     """生成简化 SBOM 文档（产品自有格式，不声明符合其他 SBOM 标准）。
 
     顶层仅含 format、formatVersion、components。默认 components 覆盖全部
@@ -207,14 +207,29 @@ def sbom_document(root_deps, packages_map, reachable=False):
     securityStatus 固定为 "unknown"，未知不代表没有风险，也不根据版本
     推断安全结论。循环依赖不影响结果：组件来自 packages_map 本身，天然
     不重复。
+
+    with_paths 为 True（CLI 的 --with-paths）时，每个组件在既有字段之外
+    追加一个 path 字段：语义与省略 --from 的 why 默认查询一致，从 ROOT
+    标记 "$root" 开始、到该组件完整包名结束，只沿 dependencies 取边数
+    最少的路径，等长时按包名序列的 Unicode 码点字典序取第一条；直接
+    依赖的路径只经过根标记与该包名。已安装但根不可达的组件 path 为 []：
+    完整导出仍保留这些组件，reachable=True 时它们本就不在筛选结果中。
+    作用域包作为单个路径元素；自环、循环与共享依赖正常结束，路径中每个
+    组件只出现一次。路径选择只取决于图本身，不受条目与依赖声明顺序影响。
+    with_paths 为 False（默认）时组件不含 path 字段，输出与既有导出逐字节
+    一致。path 只读取关系，不解析版本范围，不修改任何入参。
     """
     if reachable:
         names = reachable_names(root_deps, packages_map)
     else:
         names = packages_map.keys()
     direct = set(root_deps)
-    components = [
-        {
+    # 仅在请求路径时建立一次前驱森林；省略选项时完全不做路径计算，
+    # 既有两参数与 reachable 调用的开销与结果不变。
+    paths = _root_paths(root_deps, packages_map) if with_paths else None
+    components = []
+    for name in sorted(names):
+        component = {
             "name": name,
             "version": packages_map[name]["version"],
             "ecosystem": "npm",
@@ -222,8 +237,9 @@ def sbom_document(root_deps, packages_map, reachable=False):
             "license": "unknown",
             "securityStatus": "unknown",
         }
-        for name in sorted(names)
-    ]
+        if with_paths:
+            component["path"] = paths[name]
+        components.append(component)
     return {
         "format": "depinventory-sbom",
         "formatVersion": 1,
@@ -265,20 +281,88 @@ def diff_items(before_map, after_map):
     return records
 
 
+def _parent_map(starts, packages_map):
+    """自给定起点集合 BFS 全图，返回每个首次可达节点的前驱表。
+
+    starts 须已按字典序排好；与起点集合不连通的节点不出现在表中。
+
+    parent[node] 记录首次发现 node 的前驱；起点的前驱为 None。
+    同一节点只保留第一次命中：BFS 按层扩展，每一层的入队顺序即
+    “到达该层节点的完整包名序列”的字典序（父路径严格有序，子列表
+    排序后扩展相同后缀保序），故首次命中给出的就是到每个节点最短
+    且字典序最小的路径。
+    循环依赖与自环由 parent 表保证每个节点只处理一次。
+
+    单次遍历时间 O(V+E)、辅助存储 O(V)：parent 只记录每个节点首次
+    被发现时的前驱，队列不携带路径副本，且出队为 O(1)。不修改
+    packages_map 及其内的 deps 列表。
+    """
+    parent = {}
+    queue = deque()
+    for name in starts:
+        if name not in parent:
+            parent[name] = None
+            queue.append(name)
+
+    while queue:
+        node = queue.popleft()
+        for dep in sorted(packages_map[node]["deps"]):
+            if dep not in parent:
+                parent[dep] = node
+                queue.append(dep)
+    return parent
+
+
+def _rebuild_path(parent, target):
+    """按前驱表从 target 回溯到起点，返回起点→target 的包名路径。
+
+    target 不在 parent 表（自起点不可达）时返回 []；调用方须保证
+    target 是已安装包。仅对目标做一次回溯，路径长度等于边数。
+    """
+    if target not in parent:
+        return []
+    path = [target]
+    predecessor = parent[target]
+    while predecessor is not None:
+        path.append(predecessor)
+        predecessor = parent[predecessor]
+    path.reverse()
+    return path
+
+
+def _root_paths(root_deps, packages_map):
+    """一次性计算全部已安装包自虚拟根 $root 的 why 默认路径。
+
+    返回 {包名: 路径}：可达包的路径以 ROOT 标记开始、到完整包名结束，
+    与省略 --from 的 why 查询完全一致（最短、等长按包名序列 Unicode
+    码点字典序取第一条）；已安装但根不可达的包路径为 []。
+
+    与逐包调用 find_path 不同，这里只做一次排序起点的 BFS 建立前驱
+    森林，再为每个包回溯一次，整体 O(V+E) 外加每条路径的重建；循环、
+    自环与共享依赖由 parent 表天然处理，每个包只占一项。不修改
+    root_deps、packages_map 及其内的 deps 列表。
+    """
+    parent = _parent_map(sorted(root_deps), packages_map)
+    paths = {}
+    for name in packages_map:
+        suffix = _rebuild_path(parent, name)
+        # 虚拟根不作为图节点参与 BFS，仅在重建出的路径前补上根标记；
+        # 不可达包 suffix 为 []，路径同样为 []。
+        paths[name] = [ROOT] + suffix if suffix else []
+    return paths
+
+
 def _shortest_path(starts, packages_map, target):
     """自给定起点集合 BFS 到 target，返回起点→目标的最短包名路径。
 
     starts 须已按字典序排好；不可达返回 []。
 
-    parent[node] 记录首次发现 node 的前驱；起点的前驱为 None。
-    同一节点只保留第一次命中：BFS 按层扩展，每一层的入队顺序即
-    “到达该层节点的完整包名序列”的字典序（父路径严格有序，子列表
-    排序后扩展相同后缀保序），故首次命中就是最短且字典序最小的路径。
-    循环依赖与自环由 parent 表保证每个节点只处理一次。
-
-    除起点排序与命中后的路径重建外，单次查询时间 O(V+E)、辅助存储
-    O(V)：parent 只记录每个节点首次被发现时的前驱，队列不携带路径
-    副本，且出队为 O(1)。不修改 packages_map 及其内的 deps 列表。
+    命中 target 即停止扩展（早于全图遍历），路径选择规则与全图前驱表
+    _parent_map 完全一致：parent 记录每个节点的首次发现，BFS 按层扩展、
+    子依赖排序入队，故首次命中即最短且包名序列 Unicode 码点字典序最小
+    的路径。命中后仅做一次回溯重建（_rebuild_path），长度等于路径边数。
+    循环依赖与自环由 parent 表保证每个节点只处理一次。不修改
+    packages_map 及其内的 deps 列表。
     """
     parent = {}
     queue = deque()
@@ -298,17 +382,7 @@ def _shortest_path(starts, packages_map, target):
                 parent[dep] = node
                 queue.append(dep)
 
-    if not found:
-        return []
-
-    # 仅对命中的目标做一次回溯重建，长度等于路径边数，总量仍为 O(V)。
-    path = [target]
-    predecessor = parent[target]
-    while predecessor is not None:
-        path.append(predecessor)
-        predecessor = parent[predecessor]
-    path.reverse()
-    return path
+    return _rebuild_path(parent, target) if found else []
 
 
 def find_path(root_deps, packages_map, target, source=None):

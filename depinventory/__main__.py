@@ -101,6 +101,13 @@ def _build_parser():
         action="store_true",
         help="只导出自根节点沿 dependencies 可达的组件；省略时导出全部已安装包。",
     )
+    sbom_parser.add_argument(
+        "--with-paths",
+        dest="with_paths",
+        action="store_true",
+        help="为每个组件附加 path：自 $root 沿 dependencies 到该组件的最短"
+        "依赖来源路径（与省略 --from 的 why 查询一致）；省略时输出保持原样。",
+    )
 
     return parser
 
@@ -130,7 +137,12 @@ def main(argv=None):
             else:
                 result = list_items(root_deps, packages_map)
         elif args.command == "sbom":
-            result = sbom_document(root_deps, packages_map, reachable=args.reachable)
+            result = sbom_document(
+                root_deps,
+                packages_map,
+                reachable=args.reachable,
+                with_paths=args.with_paths,
+            )
         elif args.command == "diff":
             if args.reachable:
                 # 两份清单各自从根节点 dependencies 出发确定可达集合，
