@@ -7,7 +7,8 @@
 - lockfileVersion 为整数 3；
 - packages 为对象，且含空串 "" 根节点；
 - 根节点及每个包条目均为对象；
-- 包条目键为 node_modules/name 或 node_modules/@scope/name（平铺安装）；
+- 包条目键为 node_modules/name 或 node_modules/@scope/name（平铺安装，
+  @ 后的作用域至少一个字符，包名非空）；
 - version 为非空字符串；
 - 依赖关系只取自根节点及包条目的 dependencies：
   可省略；出现时须为对象，值为字符串，且声明的包必须存在。
@@ -51,9 +52,10 @@ def _entry_name(key):
         return None
     rest = key[len(_PACKAGES_PREFIX):]
     if rest.startswith("@"):
-        # scoped 包：@scope/name，恰好一段斜杠，两侧均非空。
+        # scoped 包：@scope/name，恰好一段斜杠；@ 与斜杠之间的作用域
+        # 至少一个字符（"@/pkg" 这类空作用域不支持），包名也非空。
         parts = rest.split("/")
-        if len(parts) != 2 or not all(parts):
+        if len(parts) != 2 or not all(parts) or parts[0] == "@":
             return None
         return rest
     if not rest or "/" in rest:
