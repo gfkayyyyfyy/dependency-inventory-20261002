@@ -185,30 +185,49 @@ def load_lockfile(path):
     return root_deps, packages_map
 
 
-def list_items(root_deps, packages_map):
-    """返回全部已安装条目（不含根节点），按名称 Unicode 码点排序。"""
-    direct = set(root_deps)
+def _sorted_items(names, packages_map, direct):
+    """由包名集合生成统一结构的清单条目，按完整包名 Unicode 码点升序。
+
+    四种清单（完整、直接、可达、不可达）共用的唯一条目构造处，共同的
+    输出规则只在此维护一次：
+
+    - 每项仅含 name、version、direct 三个键；version 取安装条目的原始
+      字符串，不解析版本范围；
+    - direct 只表示根节点 dependencies 是否直接声明该包，其他包的引用
+      不改变它；
+    - 结果按完整包名的 Unicode 码点升序排列，区分大小写，作用域包作为
+      完整名称参与排序，与安装条目及依赖声明的书写顺序无关；
+    - 根项目不在 packages_map 中，天然不会进入任何清单。
+
+    只读，不修改 packages_map 及其内的 deps 列表。
+    """
     return [
         {"name": name, "version": packages_map[name]["version"], "direct": name in direct}
-        for name in sorted(packages_map.keys())
+        for name in sorted(names)
     ]
+
+
+def list_items(root_deps, packages_map):
+    """返回全部已安装条目（不含根节点）。
+
+    成员为 packages_map 全部包名；条目结构、排序与 direct 语义统一由
+    _sorted_items 维护。不修改 root_deps、packages_map 及其内的 deps
+    列表。
+    """
+    return _sorted_items(packages_map, packages_map, set(root_deps))
 
 
 def direct_items(root_deps, packages_map):
-    """返回根节点 dependencies 直接声明的已安装条目，按名称排序。
+    """返回根节点 dependencies 直接声明的已安装条目。
 
     只保留空串根节点 dependencies 直接声明的包：所有条目 direct 均为
-    True，版本取安装条目的原始字符串，不解析根声明中的版本范围；同一包
-    即使同时被其他包引用也只出现一次。根项目本身不在 packages_map 中，
-    天然不会进入结果；仅经其他包引入的传递依赖与未被引用的包同样排除。
-    根 dependencies 省略或为空时返回 []。结果按完整包名 Unicode 码点
-    升序排列，区分大小写，作用域包作为完整名称保留，不受安装条目与声明
-    书写顺序影响。不修改 root_deps、packages_map 及其内的 deps 列表。
+    True；同一包即使同时被其他包引用也只出现一次；仅经其他包引入的传递
+    依赖与未被引用的包同样排除。根 dependencies 省略或为空时返回 []。
+    条目结构、排序与 direct 语义统一由 _sorted_items 维护。
+    不修改 root_deps、packages_map 及其内的 deps 列表。
     """
-    return [
-        {"name": name, "version": packages_map[name]["version"], "direct": True}
-        for name in sorted(set(root_deps))
-    ]
+    direct = set(root_deps)
+    return _sorted_items(direct, packages_map, direct)
 
 
 def reachable_names(root_deps, packages_map):
@@ -231,34 +250,30 @@ def reachable_names(root_deps, packages_map):
 
 
 def reachable_items(root_deps, packages_map):
-    """返回自根节点沿 dependencies 可达的条目（不含根节点），按名称排序。
+    """返回自根节点沿 dependencies 可达的条目（不含根节点）。
 
-    可达性语义见 reachable_names；direct 仍只表示根节点 dependencies
-    是否直接声明该包。
+    可达性语义见 reachable_names；条目结构、排序与 direct 语义统一由
+    _sorted_items 维护。不修改 root_deps、packages_map 及其内的 deps
+    列表。
     """
     seen = reachable_names(root_deps, packages_map)
-    direct = set(root_deps)
-    return [
-        {"name": name, "version": packages_map[name]["version"], "direct": name in direct}
-        for name in sorted(seen)
-    ]
+    return _sorted_items(seen, packages_map, set(root_deps))
 
 
 def unreachable_items(root_deps, packages_map):
-    """返回自根节点沿 dependencies 不可达的条目（不含根节点），按名称排序。
+    """返回自根节点沿 dependencies 不可达的条目（不含根节点）。
 
     可达集合的判定与 reachable_names 完全一致；本函数取其补集：全部已安装
     包中不属于可达集合的条目。不可达包即使声明了某个可达包，也不会因此
     被视为可达（关系方向只从声明者到依赖包）。与根断开的自环和循环中的
     包全部保留。结果中 direct 均为 False——不可达包不可能被根节点直接
     声明。根 dependencies 省略或为空时，全部已安装包都在结果中。
+    条目结构与排序统一由 _sorted_items 维护。
+    不修改 root_deps、packages_map 及其内的 deps 列表。
     """
     seen = reachable_names(root_deps, packages_map)
-    return [
-        {"name": name, "version": packages_map[name]["version"], "direct": False}
-        for name in sorted(packages_map.keys())
-        if name not in seen
-    ]
+    names = [name for name in packages_map if name not in seen]
+    return _sorted_items(names, packages_map, set())
 
 
 def _bfs_parents(starts, packages_map, target=None):
