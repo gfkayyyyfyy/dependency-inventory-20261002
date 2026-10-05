@@ -17,6 +17,9 @@ python -m depinventory list demo-lock.json --reachable
 # 只列出自根节点沿 dependencies 不可达的条目
 python -m depinventory list sample-lock.json --unreachable
 
+# 只列出根项目（空串根节点 dependencies）直接声明的已安装包
+python -m depinventory list demo-lock.json --direct
+
 # 查询某包自根节点的最短依赖来源路径（区分大小写的完整包名）
 python -m depinventory why demo-lock.json beta
 
@@ -59,6 +62,19 @@ python -m depinventory diff demo-lock.json new-lock.json --reachable
 或为空时全部已安装包都在结果中；只有根节点或所有安装包均可达时输出
 `[]`。`--reachable` 与 `--unreachable` 互斥，同时出现按输入错误处理
 （退出码 2，标准错误仅 `INPUT_ERROR`），且在读取文件前拒绝。
+
+带 `--direct` 时只保留空串根节点 `dependencies` 直接声明的已安装包：版本
+取自安装条目的原始字符串，不使用根声明中的版本范围；根项目本身不输出，
+仅经其他包引入的传递依赖和未被引用的包不进入结果，其他元数据不影响直接
+依赖的认定；某包同时被其他包引用时仍只出现一次。结果各项 `direct` 均为
+`true`，按完整包名的 Unicode 码点升序排列，区分大小写，作用域包作为完整
+名称保留，不受安装条目和声明顺序影响。根 `dependencies` 省略或为空、或
+文件只有根节点时输出 `[]`。`--direct` 可与 `--reachable` 或 `--unreachable`
+组合，结果为两种筛选的交集：根直接声明的包必然自根可达，故与
+`--reachable` 组合不改变直接依赖结果；与 `--unreachable` 组合恒为 `[]`。
+筛选不放宽整份校验，被排除包的坏版本或悬空依赖同样使整份输入失败；实际
+输出的版本含无法编码为 UTF-8 的孤立代理码点时按输入错误处理，仅存在于
+已排除版本中的此类字符不影响成功。省略该选项时行为不变。
 
 `why` 输出仅含 `name` 和 `path` 的 JSON 对象；`path` 为从 `$root` 到目标的
 包名数组，取边数最少的路径，同长度按包名序列的 Unicode 码点字典序取第一条。
@@ -187,6 +203,8 @@ JSON 转义文本（如 `"2.0-\ud83f"`）可在文件字节仍是合法 UTF-8 �
 ```sh
 $ python -m depinventory list demo-lock.json
 [{"name": "alpha", "version": "1.0.0", "direct": true}, {"name": "beta", "version": "2.0.0", "direct": false}]
+$ python -m depinventory list demo-lock.json --direct
+[{"name": "alpha", "version": "1.0.0", "direct": true}]
 $ python -m depinventory why demo-lock.json beta
 {"name": "beta", "path": ["$root", "alpha", "beta"]}
 $ python -m depinventory why demo-lock.json beta --from alpha

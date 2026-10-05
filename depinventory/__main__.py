@@ -8,6 +8,7 @@ from .lockfile import (
     InputError,
     NotFoundError,
     diff_items,
+    direct_items,
     find_ancestors,
     find_descendants,
     find_path,
@@ -57,6 +58,12 @@ def _build_parser():
         action="store_true",
         help="只列出自根节点沿 dependencies 不可达的条目；"
         "与 --reachable 互斥，同时出现按输入错误处理。",
+    )
+    list_parser.add_argument(
+        "--direct",
+        action="store_true",
+        help="只列空串根节点 dependencies 直接声明的已安装包（direct 均为 "
+        "true）；可与 --reachable/--unreachable 组合，结果取交集。",
     )
 
     why_parser = subparsers.add_parser(
@@ -186,6 +193,15 @@ def main(argv=None):
                 result = unreachable_items(root_deps, packages_map)
             else:
                 result = list_items(root_deps, packages_map)
+            if getattr(args, "direct", False):
+                # 与 --reachable/--unreachable 取交集：根直接声明的包本身
+                # 就是可达遍历的播种节点，故 --direct --reachable 不改变
+                # 直接依赖结果；不可达集合与根声明集合不相交，
+                # --direct --unreachable 返回 []。基结果已按名称排序，
+                # 按 direct 成员名过滤后顺序不变；校验已在加载时整份完成，
+                # 被排除包的坏版本或悬空依赖同样使整份输入失败。
+                names = {item["name"] for item in direct_items(root_deps, packages_map)}
+                result = [item for item in result if item["name"] in names]
         elif args.command == "sbom":
             result = sbom_document(
                 root_deps,

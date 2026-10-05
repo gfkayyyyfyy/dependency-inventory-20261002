@@ -244,6 +244,27 @@ def unreachable_items(root_deps, packages_map):
     ]
 
 
+def direct_items(root_deps, packages_map):
+    """返回空串根节点 dependencies 直接声明的已安装条目，按名称排序。
+
+    成员只取根节点 dependencies 的键所指向的已安装包：版本取自安装条目的
+    原始字符串，不使用根声明中的版本范围；根项目本身不输出，仅经其他包
+    引入的传递依赖与未被任何节点引用的包都不在结果中，其余元数据不影响
+    直接依赖的认定。某包同时被其他包声明时仍只出现一次——根 dependencies
+    的键本身唯一，结果也只遍历这份键表。每项仅含 name、version、direct，
+    且 direct 恒为 True。结果按完整包名 Unicode 码点升序排列，区分大小写，
+    作用域包作为完整名称保留，不受安装条目与声明书写顺序影响。根
+    dependencies 省略或为空、或文件只有根节点时 root_deps 为 []，结果为 []。
+
+    root_deps 中的名称在加载阶段已由 _validate_dependencies 逐一确认存在，
+    故 packages_map 查找不会缺失。只读，不修改入参。
+    """
+    return [
+        {"name": name, "version": packages_map[name]["version"], "direct": True}
+        for name in sorted(root_deps)
+    ]
+
+
 def _bfs_parents(starts, packages_map, target=None):
     """统一的依赖图 BFS：返回各节点首次被发现时的前驱表。
 
