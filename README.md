@@ -17,6 +17,9 @@ python -m depinventory list demo-lock.json --reachable
 # 只列出自根节点沿 dependencies 不可达的条目
 python -m depinventory list sample-lock.json --unreachable
 
+# 只列出根项目 dependencies 直接声明的依赖（direct 均为 true）
+python -m depinventory list demo-lock.json --direct
+
 # 查询某包自根节点的最短依赖来源路径（区分大小写的完整包名）
 python -m depinventory why demo-lock.json beta
 
@@ -59,6 +62,15 @@ python -m depinventory diff demo-lock.json new-lock.json --reachable
 或为空时全部已安装包都在结果中；只有根节点或所有安装包均可达时输出
 `[]`。`--reachable` 与 `--unreachable` 互斥，同时出现按输入错误处理
 （退出码 2，标准错误仅 `INPUT_ERROR`），且在读取文件前拒绝。
+
+带 `--direct` 时只保留根节点 `dependencies` 直接声明的已安装包：所有
+条目 `direct` 均为 `true`，版本取安装条目的原始字符串，不解析根声明中
+的版本范围；同一包同时被其他包引用仍只出现一次，根项目本身不输出，仅经
+其他包引入的传递依赖与未被引用的包不进入结果。根 `dependencies` 省略或
+为空、或文件只有根节点时输出 `[]`。`--direct` 可与 `--reachable` 或
+`--unreachable` 组合，结果取两种筛选的交集：根直接声明的包必然可达，
+故 `--reachable` 不改变结果，`--unreachable` 时输出 `[]`；互斥检查
+（含同时带 `--direct` 的情形）仍在读取文件前完成。
 
 `why` 输出仅含 `name` 和 `path` 的 JSON 对象；`path` 为从 `$root` 到目标的
 包名数组，取边数最少的路径，同长度按包名序列的 Unicode 码点字典序取第一条。

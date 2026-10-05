@@ -8,6 +8,7 @@ from .lockfile import (
     InputError,
     NotFoundError,
     diff_items,
+    direct_items,
     find_ancestors,
     find_descendants,
     find_path,
@@ -57,6 +58,12 @@ def _build_parser():
         action="store_true",
         help="只列出自根节点沿 dependencies 不可达的条目；"
         "与 --reachable 互斥，同时出现按输入错误处理。",
+    )
+    list_parser.add_argument(
+        "--direct",
+        action="store_true",
+        help="只列出根节点 dependencies 直接声明的条目（direct 均为 true）；"
+        "与 --reachable/--unreachable 组合时取两种筛选的交集。",
     )
 
     why_parser = subparsers.add_parser(
@@ -180,7 +187,15 @@ def main(argv=None):
 
     try:
         if args.command == "list":
-            if args.reachable:
+            if args.direct:
+                # 与可达性筛选取交集：根直接声明的包必然可达，故 --reachable
+                # 不改变结果；不可达集合与直接依赖不相交，故 --unreachable
+                # 时交集为空。
+                if args.unreachable:
+                    result = []
+                else:
+                    result = direct_items(root_deps, packages_map)
+            elif args.reachable:
                 result = reachable_items(root_deps, packages_map)
             elif args.unreachable:
                 result = unreachable_items(root_deps, packages_map)
