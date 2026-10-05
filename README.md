@@ -46,6 +46,9 @@ python -m depinventory diff demo-lock.json new-lock.json
 
 # 只比较两份清单各自自根节点沿 dependencies 可达的条目
 python -m depinventory diff demo-lock.json new-lock.json --reachable
+
+# 只比较两份清单各自根节点 dependencies 直接声明的条目
+python -m depinventory diff demo-lock.json new-lock.json --direct
 ```
 
 `list` 向标准输出写 JSON 数组，每项仅含 `name`、`version`、`direct`
@@ -149,6 +152,17 @@ Unicode 码点升序排列并去重，同一包被多条路径引入只出现一
 即使包两侧都安装且版本相同也如此；两侧都可达时仍仅版本字符串不同才标记
 `changed`。根项目不参与比较；筛选不放宽校验，不可达包的结构错误同样使
 整份输入失败。省略该选项时行为不变。
+
+带 `--direct` 时，两份清单各自只保留根节点 `dependencies` 直接声明的
+已安装包再比较：仅新侧直接声明的包标记 `added`（`before` 为 `null`），
+仅旧侧直接声明的包标记 `removed`（`after` 为 `null`），即使另一侧仍
+安装着相同版本也如此；两侧均直接声明时仍仅版本字符串不同才标记
+`changed`，只改变根声明的范围文本不产生记录。版本取安装条目的原始
+字符串，不解析根声明的版本范围；仅被其他包引入的传递依赖与未被引用的
+包不进入比较。根 `dependencies` 省略或为空时该侧没有成员，两侧都为空
+或同一文件比较时输出 `[]`。`--direct` 与 `--reachable` 可同时使用，
+结果与只用 `--direct` 一致；筛选不放宽校验，未进入比较范围的条目的
+结构错误同样使整份输入失败。
 
 ## 支持范围
 

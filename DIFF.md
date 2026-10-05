@@ -1,7 +1,7 @@
 # 差异比较（diff）流程说明
 
-本文说明 `python -m depinventory diff <旧清单> <新清单> [--reachable]` 从输入
-到输出的完整数据流，并用文件名与函数名定位源码。行为约定与 README 一致；
+本文说明 `python -m depinventory diff <旧清单> <新清单> [--reachable] [--direct]`
+从输入到输出的完整数据流，并用文件名与函数名定位源码。行为约定与 README 一致；
 本文只做解释，不改变任何产品代码、公开接口、README、WHY.md、SBOM.md 或
 样例文件。工具只读本地输入文件，不联网。
 
@@ -18,10 +18,13 @@
    `load_lockfile(args.before)` 与 `load_lockfile(args.after)`，各返回
    `(root_deps, packages_map)`。两份文件适用同一套校验规则，任何一份无效
    即整体失败。
-3. **比较范围确定**：省略 `--reachable` 时，比较范围是两侧 `packages_map`
+3. **比较范围确定**：省略筛选选项时，比较范围是两侧 `packages_map`
    的全部已安装条目；带 `--reachable` 时，`main()` 先用 `lockfile.py` 的
    `reachable_names()` 分别求出两侧自根节点沿 `dependencies` 可达的包名
-   集合，把两侧 `packages_map` 各自过滤到可达条目，再交给比较函数。
+   集合，把两侧 `packages_map` 各自过滤到可达条目，再交给比较函数；带
+   `--direct` 时，`main()` 把两侧 `packages_map` 各自过滤到根节点
+   `dependencies` 直接声明的条目（直接声明的包必然可达，故与
+   `--reachable` 同时出现时结果与只用 `--direct` 一致）。
 4. **记录生成与 JSON 输出**：`lockfile.py` 的 `diff_items(before_map,
    after_map)` 生成差异记录数组；`main()` 用
    `json.dumps(..., ensure_ascii=False)` 加一个换行写入标准输出，返回 0。
@@ -30,14 +33,16 @@
 
 `diff_items(before_map, after_map)`（`lockfile.py`）是函数级公开接口（经
 `depinventory/__init__.py` 导出），它**只比较传入的两份映射**，本身不知道
-可达性：`--reachable` 的筛选完全由 `__main__.py` 的 `main()` 在调用前
-完成——先用 `reachable_names(root_deps, packages_map)` 求出该侧的可达包名
-集合，再把映射过滤为只含可达条目的子集。因此：
+可达性或直接声明：`--reachable` 与 `--direct` 的筛选完全由 `__main__.py`
+的 `main()` 在调用前完成——`--reachable` 先用
+`reachable_names(root_deps, packages_map)` 求出该侧的可达包名集合，
+`--direct` 直接取该侧根节点 `dependencies` 声明的包名集合，再把映射过滤
+为对应子集。因此：
 
-- 省略 `--reachable` 时，命令行行为等价于直接以两份完整 `packages_map`
+- 省略筛选选项时，命令行行为等价于直接以两份完整 `packages_map`
   调用 `diff_items(before_map, after_map)`；
-- 带 `--reachable` 时，等价于调用方先过滤、再以过滤后的映射调用同一个
-  `diff_items`，两参数调用语义不变；
+- 带 `--reachable` 或 `--direct` 时，等价于调用方先过滤、再以过滤后的
+  映射调用同一个 `diff_items`，两参数调用语义不变；
 - 校验始终发生在筛选之前（见下文「校验先于筛选」），`diff_items` 接收的
   永远是已校验数据。
 
@@ -189,12 +194,45 @@ $ python -m depinventory diff after.json before.json --reachable
 同一对清单、同一选项，仅因旧/新位置互换，`beta` 变为 `added`、`gamma`
 变为 `removed`，缺失侧仍为 `null`，存在侧版本原样保留。
 
+## 直接声明集合的确定规则（--direct）
+
+带 `--direct` 时，每侧成员只取该侧根节点（空串 `""` 条目）`dependencies`
+直接声明的已安装包，规则与 `list --direct` 的成员选取相同：
+
+- 版本取安装条目的原始字符串，**不解析根声明中的版本范围**——只改变根
+  声明的范围文本（如 `"^1.0.0"` 改为 `"~1.0.0"`）不产生任何记录；
+- 根项目本身、仅被其他包引入的传递依赖、未被任何声明引用的已安装包都
+  不进入该侧范围；其他字段（如包条目的 `dependencies`）不参与成员筛选；
+- 根 `dependencies` 省略或为空对象时，该侧没有成员；两侧都为空或同一
+  文件与自身比较时输出 `[]`。
+
+两侧各自独立确定直接声明集合，再按「比较记录的生成规则」比较：仅新侧
+直接声明的包标记 `added`（`before` 为 `null`），仅旧侧直接声明的包标记
+`removed`（`after` 为 `null`）——**即使另一侧仍安装着相同版本也如此**；
+两侧均直接声明时仍仅版本字符串不同才标记 `changed`，两个版本原样保留。
+
+`--direct` 与 `--reachable` 可以同时使用：直接声明的包必然可达，交集即
+直接声明集合，故结果与只用 `--direct` 一致。
+
+以仓库自带的 `demo-lock.json`（旧）与 `new-lock.json`（新）为例：旧侧根
+只声明 `alpha@1.0.0`，新侧根只声明 `beta@2.1.0`，`gamma` 虽在新侧安装但
+未被根直接声明：
+
+```sh
+$ python -m depinventory diff demo-lock.json new-lock.json --direct
+[{"name": "alpha", "change": "removed", "before": "1.0.0", "after": null}, {"name": "beta", "change": "added", "before": null, "after": "2.1.0"}]
+```
+
+`alpha` 仅旧侧直接声明 → `removed`；`beta` 仅新侧直接声明 → `added`
+（尽管旧侧也安装了 `beta@2.0.0`，但它只是 `alpha` 的传递依赖）；`gamma`
+两侧都未被根直接声明，不出现。
+
 ## 校验先于筛选
 
 **整份校验先于任何筛选与比较**。`main()` 先把两份输入完整跑完
 `load_lockfile()`，成功后才做可达筛选与 `diff_items()` 比较。因此错误
 即使位于根节点不可达的包上（例如不可达包的空版本、不可达包的悬空依赖），
-也同样使整份输入失败，不会被 `--reachable` 的筛选「跳过」。
+也同样使整份输入失败，不会被 `--reachable`、`--direct` 的筛选「跳过」。
 
 任一输入出现下列情形，命令退出码为 `2`，标准输出为空，标准错误仅含
 `INPUT_ERROR` 和一个换行，不输出部分结果或堆栈：
