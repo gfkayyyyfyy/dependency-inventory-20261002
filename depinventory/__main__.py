@@ -120,10 +120,17 @@ def _build_parser():
         "省略时比较全部已安装条目。",
     )
     diff_parser.add_argument(
+        "--unreachable",
+        action="store_true",
+        help="只比较两份清单各自自根节点沿 dependencies 不可达的条目；"
+        "与 --reachable 互斥，同时出现按输入错误处理。",
+    )
+    diff_parser.add_argument(
         "--direct",
         action="store_true",
         help="只比较两份清单各自根节点 dependencies 直接声明的条目；"
-        "与 --reachable 同时出现时结果与只用 --direct 一致。",
+        "与 --reachable 同时出现时结果与只用 --direct 一致，"
+        "与 --unreachable 同时出现时交集为空。",
     )
 
     sbom_parser = subparsers.add_parser(
@@ -168,9 +175,10 @@ def main(argv=None):
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    # --reachable 与 --unreachable 互斥：在读取任何文件前按输入错误拒绝。
+    # --reachable 与 --unreachable 互斥：在读取任何文件前按输入错误拒绝，
+    # 即使同时带 --direct 也如此。
     if (
-        args.command == "list"
+        args.command in ("list", "diff")
         and getattr(args, "reachable", False)
         and getattr(args, "unreachable", False)
     ):
@@ -217,7 +225,13 @@ def main(argv=None):
                 with_purl=args.with_purl,
             )
         elif args.command == "diff":
-            if args.direct:
+            if args.direct and args.unreachable:
+                # 直接声明的包必然可达，不可达集合与直接声明集合不相交，
+                # 故 --direct 与 --unreachable 的交集为空；两份文件已在
+                # 加载时完整校验，未进入比较范围的条目的错误同样导致失败。
+                before_map = {}
+                after_map = {}
+            elif args.direct:
                 # 两侧各自只保留根节点 dependencies 直接声明的已安装包；
                 # 直接声明的包必然可达，故与 --reachable 同时出现时结果
                 # 与只用 --direct 一致。校验已在加载时整份完成，未进入
@@ -240,6 +254,24 @@ def main(argv=None):
                 # 不可达包的错误同样导致失败。
                 before_keep = reachable_names(before_root, before_map)
                 after_keep = reachable_names(after_root, after_map)
+                before_map = {
+                    name: info
+                    for name, info in before_map.items()
+                    if name in before_keep
+                }
+                after_map = {
+                    name: info
+                    for name, info in after_map.items()
+                    if name in after_keep
+                }
+            elif args.unreachable:
+                # 与 --reachable 同一可达性口径取补集：两份清单各自排除
+                # 自根节点沿 dependencies 可达的包后再比较；与根断开的
+                # 自环和循环保留，根 dependencies 省略或为空时该侧全部
+                # 安装包进入比较。校验已在加载时整份完成，可达包的错误
+                # 同样导致失败。
+                before_keep = set(before_map) - reachable_names(before_root, before_map)
+                after_keep = set(after_map) - reachable_names(after_root, after_map)
                 before_map = {
                     name: info
                     for name, info in before_map.items()

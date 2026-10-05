@@ -478,9 +478,9 @@ def diff_items(before_map, after_map):
     不同的标记 changed；版本完全相同的包不输出。按包名 Unicode 码点排序，
     每个包最多出现一次。不解析版本范围，也不判断升级、降级或安全风险。
 
-    本函数只比较传入的两份映射；diff --reachable 的根可达筛选与
-    diff --direct 的根直接声明筛选都由调用方先过滤两侧映射完成，
-    两参数调用语义不变。
+    本函数只比较传入的两份映射；diff --reachable 的根可达筛选、
+    diff --unreachable 的根不可达筛选与 diff --direct 的根直接声明筛选
+    都由调用方先过滤两侧映射完成，两参数调用语义不变。
     """
     records = []
     for name in sorted(set(before_map) | set(after_map)):
