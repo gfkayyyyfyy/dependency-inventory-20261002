@@ -241,7 +241,20 @@ def main(argv=None):
         print(_INPUT_ERROR, file=sys.stderr)
         return 2
 
-    sys.stdout.write(json.dumps(result, ensure_ascii=False) + "\n")
+    # 先把整份 JSON 文档编码为 UTF-8 再写入：结果字符串中若含 JSON 转义
+    # 出的孤立代理码点（无法按 UTF-8 编码），json.dumps 本身不会报错，
+    # 直接写入 TextIO 会在输出中途抛 UnicodeEncodeError——此时部分字节
+    # 可能已经落盘。这里先对完整文档编码：编码失败则一个字节都不输出，
+    # 统一按输入错误处理。判断范围是实际结果文本：未参与结果的元数据、
+    # 被筛选排除的版本字符串即使含孤立代理，只要不在文档中就不影响输出。
+    # 正常 Unicode（中文、合法代理对解码出的补充平面字符）原样保留，
+    # ensure_ascii=False 维持既有成功输出形态。
+    try:
+        payload = (json.dumps(result, ensure_ascii=False) + "\n").encode("utf-8")
+    except UnicodeEncodeError:
+        print(_INPUT_ERROR, file=sys.stderr)
+        return 2
+    sys.stdout.buffer.write(payload)
     return 0
 
 
