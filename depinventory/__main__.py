@@ -24,6 +24,20 @@ _INPUT_ERROR = "INPUT_ERROR"
 _NOT_FOUND = "NOT_FOUND"
 
 
+def _encode_result(result):
+    """把成功结果序列化为待写出的 UTF-8 字节（单个 JSON 文档加末尾换行）。
+
+    JSON 转义文本可解码出孤立 Unicode 代理码点（如 "2.0-\\ud83f"）：
+    Python 字符串允许持有它们，json.dumps(ensure_ascii=False) 也照常产出
+    文本，但严格 UTF-8 编码无法表示，encode 抛 UnicodeEncodeError。合法
+    代理对在 JSON 解析阶段已合并为补充平面字符（如 U+1F600），中文与其余
+    正常 Unicode 同样正常编码。调用方据此按输入错误处理，且因整份字节
+    在此一次成型、之后才写 stdout，失败时标准输出不会出现部分清单。
+    """
+
+    return (json.dumps(result, ensure_ascii=False) + "\n").encode("utf-8")
+
+
 def _build_parser():
     parser = argparse.ArgumentParser(
         prog="depinventory",
@@ -241,7 +255,19 @@ def main(argv=None):
         print(_INPUT_ERROR, file=sys.stderr)
         return 2
 
-    sys.stdout.write(json.dumps(result, ensure_ascii=False) + "\n")
+    try:
+        # 先在内存中完成序列化与 UTF-8 编码：实际输出文本含孤立代理码点
+        # 时在此抛 UnicodeEncodeError，按输入错误处理，且尚未写过任何
+        # 标准输出字节，故不会吐出部分 JSON 或堆栈。只检查实际结果文本；
+        # 未参与结果的元数据、被筛选排除的版本字符串不影响能正常输出的
+        # 结果。load_lockfile 与各分析函数的返回值/异常语义不变。
+        payload = _encode_result(result)
+    except UnicodeEncodeError:
+        print(_INPUT_ERROR, file=sys.stderr)
+        return 2
+
+    sys.stdout.buffer.write(payload)
+    sys.stdout.buffer.flush()
     return 0
 
 
