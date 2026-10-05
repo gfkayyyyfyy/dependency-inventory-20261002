@@ -47,6 +47,9 @@ python -m depinventory diff demo-lock.json new-lock.json
 # 只比较两份清单各自自根节点沿 dependencies 可达的条目
 python -m depinventory diff demo-lock.json new-lock.json --reachable
 
+# 只比较两份清单各自已安装但根依赖链不可达的条目
+python -m depinventory diff demo-lock.json new-lock.json --unreachable
+
 # 只比较两份清单各自根节点 dependencies 直接声明的条目
 python -m depinventory diff demo-lock.json new-lock.json --direct
 ```
@@ -153,6 +156,19 @@ Unicode 码点升序排列并去重，同一包被多条路径引入只出现一
 `changed`。根项目不参与比较；筛选不放宽校验，不可达包的结构错误同样使
 整份输入失败。省略该选项时行为不变。
 
+带 `--unreachable` 时，两份清单各自排除从自身根节点沿 `dependencies`
+可达的包后再比较（口径与 `list --unreachable` 相同）：每侧成员是该侧
+全部已安装包中不属于可达集合的条目，根项目不参与；与根断开的自环和循环
+保留并正常结束，根 `dependencies` 省略或为空时该侧全部安装包进入比较。
+仅新侧筛选集合有的包标记 `added`（`before` 为 `null`），仅旧侧有的标记
+`removed`（`after` 为 `null`），即使包两侧都安装且版本相同——例如从旧侧
+可达变为新侧不可达也记 `added`，反向记 `removed`；两侧筛选集合都有且
+版本字符串不同才标记 `changed`，两侧均不可达且版本相同不输出。关系仍只
+取 `dependencies`，不解析版本范围，也不从其他字段补边；筛选不放宽校验，
+可达包（被排除）与不可达包（进入比较）的结构错误同样使整份输入失败。
+`--unreachable` 与 `--reachable` 互斥，同时出现（即使还带 `--direct`）
+按输入错误处理，且在读取文件前拒绝。
+
 带 `--direct` 时，两份清单各自只保留根节点 `dependencies` 直接声明的
 已安装包再比较：仅新侧直接声明的包标记 `added`（`before` 为 `null`），
 仅旧侧直接声明的包标记 `removed`（`after` 为 `null`），即使另一侧仍
@@ -161,8 +177,10 @@ Unicode 码点升序排列并去重，同一包被多条路径引入只出现一
 字符串，不解析根声明的版本范围；仅被其他包引入的传递依赖与未被引用的
 包不进入比较。根 `dependencies` 省略或为空时该侧没有成员，两侧都为空
 或同一文件比较时输出 `[]`。`--direct` 与 `--reachable` 可同时使用，
-结果与只用 `--direct` 一致；筛选不放宽校验，未进入比较范围的条目的
-结构错误同样使整份输入失败。
+结果与只用 `--direct` 一致；与 `--unreachable` 同时使用时取交集——直接
+声明的包必然可达，与不可达集合不相交，故合法输入返回 `[]`（仍完整校验
+两份文件）；筛选不放宽校验，未进入比较范围的条目的结构错误同样使整份
+输入失败。
 
 ## 支持范围
 
@@ -241,6 +259,8 @@ $ python -m depinventory diff demo-lock.json new-lock.json
 [{"name": "alpha", "change": "removed", "before": "1.0.0", "after": null}, {"name": "beta", "change": "changed", "before": "2.0.0", "after": "2.1.0"}, {"name": "gamma", "change": "added", "before": null, "after": "3.0.0"}]
 $ python -m depinventory diff demo-lock.json new-lock.json --reachable
 [{"name": "alpha", "change": "removed", "before": "1.0.0", "after": null}, {"name": "beta", "change": "changed", "before": "2.0.0", "after": "2.1.0"}]
+$ python -m depinventory diff demo-lock.json new-lock.json --unreachable
+[{"name": "gamma", "change": "added", "before": null, "after": "3.0.0"}]
 ```
 
 `why beta` 的 `path` 为 `["$root", "alpha", "beta"]`。`new-lock.json` 是

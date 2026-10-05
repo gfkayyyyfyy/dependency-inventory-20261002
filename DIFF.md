@@ -1,9 +1,10 @@
 # 差异比较（diff）流程说明
 
-本文说明 `python -m depinventory diff <旧清单> <新清单> [--reachable] [--direct]`
-从输入到输出的完整数据流，并用文件名与函数名定位源码。行为约定与 README 一致；
-本文只做解释，不改变任何产品代码、公开接口、README、WHY.md、SBOM.md 或
-样例文件。工具只读本地输入文件，不联网。
+本文说明 `python -m depinventory diff <旧清单> <新清单> [--reachable]
+[--unreachable] [--direct]` 从输入到输出的完整数据流，并用文件名与函数名
+定位源码。行为约定与 README 一致；本文只做解释，不改变任何产品代码、
+公开接口、README、WHY.md、SBOM.md 或样例文件。工具只读本地输入文件，
+不联网。
 
 ## 总览：从命令行到 JSON 输出
 
@@ -22,9 +23,12 @@
    的全部已安装条目；带 `--reachable` 时，`main()` 先用 `lockfile.py` 的
    `reachable_names()` 分别求出两侧自根节点沿 `dependencies` 可达的包名
    集合，把两侧 `packages_map` 各自过滤到可达条目，再交给比较函数；带
-   `--direct` 时，`main()` 把两侧 `packages_map` 各自过滤到根节点
-   `dependencies` 直接声明的条目（直接声明的包必然可达，故与
-   `--reachable` 同时出现时结果与只用 `--direct` 一致）。
+   `--unreachable` 时改为以「全部已安装包名减去该侧可达集合」过滤两侧
+   （与 `list --unreachable` 同一口径）；带 `--direct` 时，`main()` 把
+   两侧 `packages_map` 各自过滤到根节点 `dependencies` 直接声明的条目
+   （直接声明的包必然可达，故与 `--reachable` 同时出现时结果与只用
+   `--direct` 一致，与 `--unreachable` 同时出现时交集为空、结果恒为
+   `[]`）。
 4. **记录生成与 JSON 输出**：`lockfile.py` 的 `diff_items(before_map,
    after_map)` 生成差异记录数组；`main()` 用
    `json.dumps(..., ensure_ascii=False)` 加一个换行写入标准输出，返回 0。
@@ -33,16 +37,16 @@
 
 `diff_items(before_map, after_map)`（`lockfile.py`）是函数级公开接口（经
 `depinventory/__init__.py` 导出），它**只比较传入的两份映射**，本身不知道
-可达性或直接声明：`--reachable` 与 `--direct` 的筛选完全由 `__main__.py`
-的 `main()` 在调用前完成——`--reachable` 先用
+可达性或直接声明：`--reachable`、`--unreachable` 与 `--direct` 的筛选完全
+由 `__main__.py` 的 `main()` 在调用前完成——`--reachable` 先用
 `reachable_names(root_deps, packages_map)` 求出该侧的可达包名集合，
-`--direct` 直接取该侧根节点 `dependencies` 声明的包名集合，再把映射过滤
-为对应子集。因此：
+`--unreachable` 取其在该侧全部已安装包名中的补集，`--direct` 直接取该侧
+根节点 `dependencies` 声明的包名集合，再把映射过滤为对应子集。因此：
 
 - 省略筛选选项时，命令行行为等价于直接以两份完整 `packages_map`
   调用 `diff_items(before_map, after_map)`；
-- 带 `--reachable` 或 `--direct` 时，等价于调用方先过滤、再以过滤后的
-  映射调用同一个 `diff_items`，两参数调用语义不变；
+- 带 `--reachable`、`--unreachable` 或 `--direct` 时，等价于调用方先
+  过滤、再以过滤后的映射调用同一个 `diff_items`，两参数调用语义不变；
 - 校验始终发生在筛选之前（见下文「校验先于筛选」），`diff_items` 接收的
   永远是已校验数据。
 
@@ -88,6 +92,50 @@
 带 `--reachable` 时，两侧各自独立确定可达集合，再按上节规则比较：仅新侧
 可达的包标记 `added`，仅旧侧可达的包标记 `removed`——**即使包两侧都安装
 且版本相同也如此**；两侧都可达时仍仅版本字符串不同才标记 `changed`。
+
+## 不可达集合的确定规则（--unreachable）
+
+带 `--unreachable` 时，每侧成员是该侧**全部已安装包中不属于根可达集合**
+的条目，口径与 `list --unreachable` 完全一致，可达集合本身仍由
+`reachable_names(root_deps, packages_map)` 用同一套 BFS 确定：
+
+- 可达性**只沿 `dependencies`** 连边：不解析版本范围，也不从其他元数据
+  补充连边；不可达集合是可达集合在该侧 `packages_map` 全部包名中的补集，
+  根项目不在 `packages_map` 中，天然不参与。
+- 与根节点断开的包（包括**断开的循环**与断开的自环）全部保留在不可达
+  集合中，遍历由 `seen` 集合保证每个节点只扩展一次，正常结束。
+- 不可达包即使声明了某个可达包，也不会因此变为可达（关系方向只从声明者
+  到依赖包）。
+- 根 `dependencies` **省略或为空对象**时，该侧可达集合为空，**全部已安装
+  包都进入比较**——这与 `--reachable` 恰好相反；只有根节点、或所有安装包
+  均可达时该侧比较集合为空。
+
+两侧各自独立确定不可达集合，再按「比较记录的生成规则」比较。需要特别
+注意成员身份变化的记录方向：
+
+- 仅新侧不可达集合有该包 → `added`（`before` 为 `null`），仅旧侧不可达
+  集合有该包 → `removed`（`after` 为 `null`）；
+- 因此包**两侧都安装且版本相同**时，若它从旧侧可达变为新侧不可达，则它
+  只出现在新侧不可达集合中，记为 `added`；从旧侧不可达变为新侧可达则记为
+  `removed`；**两侧均不可达且版本相同不输出**；
+- 两侧都不可达时仍仅版本字符串不同才标记 `changed`，两个版本原样保留。
+
+以仓库自带的 `demo-lock.json`（旧）与 `new-lock.json`（新）为例：旧侧
+根声明 `alpha`、`alpha` 声明 `beta`，两包都可达，不可达集合为空；新侧
+根只声明 `beta`（可达），`gamma@3.0.0` 已安装但没有任何声明引用它：
+
+```sh
+$ python -m depinventory diff demo-lock.json new-lock.json --unreachable
+[{"name": "gamma", "change": "added", "before": null, "after": "3.0.0"}]
+```
+
+`alpha` 的卸载与 `beta` 的改版都发生在可达侧，不出现；同一文件与自身
+比较时两侧不可达集合相同，输出 `[]`。
+
+`--unreachable` 与 `--reachable` **互斥**：同时出现时 `main()` 在读取
+任何文件之前即按输入错误拒绝（退出码 2、标准输出为空、标准错误仅
+`INPUT_ERROR` 和一个换行），即使还带 `--direct`、即使路径指向不存在的
+文件也是如此——互斥检查先于文件读取。
 
 ## 示例：安装清单不变、根依赖链变化
 
@@ -212,7 +260,10 @@ $ python -m depinventory diff after.json before.json --reachable
 两侧均直接声明时仍仅版本字符串不同才标记 `changed`，两个版本原样保留。
 
 `--direct` 与 `--reachable` 可以同时使用：直接声明的包必然可达，交集即
-直接声明集合，故结果与只用 `--direct` 一致。
+直接声明集合，故结果与只用 `--direct` 一致。`--direct` 与 `--unreachable`
+也可以同时使用：直接声明的包必然可达，与不可达集合不相交，两侧比较集合
+都为空，合法输入返回 `[]`；两份文件仍在此之前完整校验，故无效输入照常
+以 `INPUT_ERROR` 失败。
 
 以仓库自带的 `demo-lock.json`（旧）与 `new-lock.json`（新）为例：旧侧根
 只声明 `alpha@1.0.0`，新侧根只声明 `beta@2.1.0`，`gamma` 虽在新侧安装但
@@ -230,9 +281,14 @@ $ python -m depinventory diff demo-lock.json new-lock.json --direct
 ## 校验先于筛选
 
 **整份校验先于任何筛选与比较**。`main()` 先把两份输入完整跑完
-`load_lockfile()`，成功后才做可达筛选与 `diff_items()` 比较。因此错误
-即使位于根节点不可达的包上（例如不可达包的空版本、不可达包的悬空依赖），
-也同样使整份输入失败，不会被 `--reachable`、`--direct` 的筛选「跳过」。
+`load_lockfile()`，成功后才做可达/不可达/直接声明筛选与 `diff_items()`
+比较。因此错误即使位于被筛选排除的包上（例如 `--reachable` 下不可达包
+的空版本、`--unreachable` 下**可达**包的空版本或悬空依赖），也同样使
+整份输入失败，不会被 `--reachable`、`--unreachable`、`--direct` 的筛选
+「跳过」。互斥冲突（`diff` 同时带 `--reachable` 与 `--unreachable`，即使
+还带 `--direct`）先于文件读取拒绝，不需要读到有效输入即可判定；但
+`--unreachable` 仅与 `--direct` 组合时，拒绝/成功判定仍发生在两份文件
+完整加载校验之后。
 
 任一输入出现下列情形，命令退出码为 `2`，标准输出为空，标准错误仅含
 `INPUT_ERROR` 和一个换行，不输出部分结果或堆栈：

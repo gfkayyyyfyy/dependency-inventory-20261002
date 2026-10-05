@@ -117,13 +117,23 @@ def _build_parser():
         "--reachable",
         action="store_true",
         help="只比较两份清单各自自根节点沿 dependencies 可达的条目；"
-        "省略时比较全部已安装条目。",
+        "省略时比较全部已安装条目。与 --unreachable 互斥，同时出现按"
+        "输入错误处理。",
+    )
+    diff_parser.add_argument(
+        "--unreachable",
+        action="store_true",
+        help="只比较两份清单各自已安装但自根节点沿 dependencies 不可达"
+        "的条目（与 list --unreachable 同一口径）；根依赖省略或为空时"
+        "该侧全部安装包进入比较。与 --reachable 互斥，同时出现按输入"
+        "错误处理。",
     )
     diff_parser.add_argument(
         "--direct",
         action="store_true",
         help="只比较两份清单各自根节点 dependencies 直接声明的条目；"
-        "与 --reachable 同时出现时结果与只用 --direct 一致。",
+        "与 --reachable 同时出现时结果与只用 --direct 一致；"
+        "与 --unreachable 同时出现时取交集，结果恒为空。",
     )
 
     sbom_parser = subparsers.add_parser(
@@ -168,9 +178,10 @@ def main(argv=None):
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    # --reachable 与 --unreachable 互斥：在读取任何文件前按输入错误拒绝。
+    # --reachable 与 --unreachable 互斥：在读取任何文件前按输入错误拒绝，
+    # 即使还带 --direct 也如此（list 与 diff 两条子命令同口径）。
     if (
-        args.command == "list"
+        args.command in ("list", "diff")
         and getattr(args, "reachable", False)
         and getattr(args, "unreachable", False)
     ):
@@ -218,12 +229,19 @@ def main(argv=None):
             )
         elif args.command == "diff":
             if args.direct:
-                # 两侧各自只保留根节点 dependencies 直接声明的已安装包；
-                # 直接声明的包必然可达，故与 --reachable 同时出现时结果
-                # 与只用 --direct 一致。校验已在加载时整份完成，未进入
-                # 比较范围的条目（传递依赖、未引用包）的错误同样导致失败。
-                before_keep = set(before_root)
-                after_keep = set(after_root)
+                # 两侧各自先确定根节点 dependencies 直接声明的已安装包，
+                # 再与可达性筛选取交集：直接声明的包必然可达，故与
+                # --reachable 同时出现时结果与只用 --direct 一致；
+                # 不可达集合与直接声明集合不相交，故与 --unreachable
+                # 同时出现时两侧比较集合均为空（合法输入返回 []）。
+                # 校验已在加载时整份完成，未进入比较范围的条目
+                # （传递依赖、未引用包）的错误同样导致失败。
+                if args.unreachable:
+                    before_keep = set()
+                    after_keep = set()
+                else:
+                    before_keep = set(before_root)
+                    after_keep = set(after_root)
                 before_map = {
                     name: info
                     for name, info in before_map.items()
@@ -240,6 +258,31 @@ def main(argv=None):
                 # 不可达包的错误同样导致失败。
                 before_keep = reachable_names(before_root, before_map)
                 after_keep = reachable_names(after_root, after_map)
+                before_map = {
+                    name: info
+                    for name, info in before_map.items()
+                    if name in before_keep
+                }
+                after_map = {
+                    name: info
+                    for name, info in after_map.items()
+                    if name in after_keep
+                }
+            elif args.unreachable:
+                # 与 list --unreachable 同一口径：每侧取自身全部已安装包
+                # 中不属于该侧根可达集合的条目（根项目不在 packages_map，
+                # 天然不参与）。根 dependencies 省略或为空时该侧可达集合
+                # 为空，全部安装包进入比较；与根断开的自环和循环保留。
+                # 关系仍只取 dependencies，不解析版本范围，不从其他字段
+                # 补边。校验已在加载时整份完成，可达包的错误同样导致失败。
+                before_reachable = reachable_names(before_root, before_map)
+                after_reachable = reachable_names(after_root, after_map)
+                before_keep = {
+                    name for name in before_map if name not in before_reachable
+                }
+                after_keep = {
+                    name for name in after_map if name not in after_reachable
+                }
                 before_map = {
                     name: info
                     for name, info in before_map.items()
