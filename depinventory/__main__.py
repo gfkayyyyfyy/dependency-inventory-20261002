@@ -25,6 +25,44 @@ _INPUT_ERROR = "INPUT_ERROR"
 _NOT_FOUND = "NOT_FOUND"
 
 
+def _diff_scope_names(root_deps, packages_map, args):
+    """按 diff 的范围选项确定单侧参与比较的包名集合。
+
+    旧、新两份清单各自独立调用本函数，同一种范围规则只在此维护一份，
+    保证两侧口径一致：
+
+    - 省略选项：全部已安装包（packages_map 全部键，根项目不在其中，
+      天然不参与）。
+    - --reachable：自根节点沿 dependencies 可达的包。
+    - --unreachable：上述可达集合的补集（与 list --unreachable 同一
+      口径）；根 dependencies 省略或为空时可达集合为空，全部安装包
+      进入比较；与根断开的自环和循环保留。
+    - --direct：根节点 dependencies 直接声明的包；与 --reachable
+      组合时结果与只用 --direct 一致（直接声明的包必然可达），与
+      --unreachable 组合时交集恒为空（合法输入下该侧集合为空）。
+
+    关系仍只取 dependencies，不解析版本范围，不从其他字段补边。
+    校验已在加载时整份完成，被筛选排除条目的结构错误同样导致失败，
+    空交集不能跳过校验。不修改 root_deps、packages_map。
+    """
+    if args.direct:
+        if args.unreachable:
+            return set()
+        return set(root_deps)
+    if args.reachable:
+        return reachable_names(root_deps, packages_map)
+    if args.unreachable:
+        reachable = reachable_names(root_deps, packages_map)
+        return {name for name in packages_map if name not in reachable}
+    return set(packages_map)
+
+
+def _diff_scope_map(root_deps, packages_map, args):
+    """按 diff 范围选项过滤单侧映射，只保留参与比较的条目。"""
+    keep = _diff_scope_names(root_deps, packages_map, args)
+    return {name: info for name, info in packages_map.items() if name in keep}
+
+
 def _encode_result(result):
     """把成功结果序列化为待写出的 UTF-8 字节（单个 JSON 文档加末尾换行）。
 
@@ -228,71 +266,11 @@ def main(argv=None):
                 with_purl=args.with_purl,
             )
         elif args.command == "diff":
-            if args.direct:
-                # 两侧各自先确定根节点 dependencies 直接声明的已安装包，
-                # 再与可达性筛选取交集：直接声明的包必然可达，故与
-                # --reachable 同时出现时结果与只用 --direct 一致；
-                # 不可达集合与直接声明集合不相交，故与 --unreachable
-                # 同时出现时两侧比较集合均为空（合法输入返回 []）。
-                # 校验已在加载时整份完成，未进入比较范围的条目
-                # （传递依赖、未引用包）的错误同样导致失败。
-                if args.unreachable:
-                    before_keep = set()
-                    after_keep = set()
-                else:
-                    before_keep = set(before_root)
-                    after_keep = set(after_root)
-                before_map = {
-                    name: info
-                    for name, info in before_map.items()
-                    if name in before_keep
-                }
-                after_map = {
-                    name: info
-                    for name, info in after_map.items()
-                    if name in after_keep
-                }
-            elif args.reachable:
-                # 两份清单各自从根节点 dependencies 出发确定可达集合，
-                # 只保留可达条目后再比较；校验已在加载时整份完成，
-                # 不可达包的错误同样导致失败。
-                before_keep = reachable_names(before_root, before_map)
-                after_keep = reachable_names(after_root, after_map)
-                before_map = {
-                    name: info
-                    for name, info in before_map.items()
-                    if name in before_keep
-                }
-                after_map = {
-                    name: info
-                    for name, info in after_map.items()
-                    if name in after_keep
-                }
-            elif args.unreachable:
-                # 与 list --unreachable 同一口径：每侧取自身全部已安装包
-                # 中不属于该侧根可达集合的条目（根项目不在 packages_map，
-                # 天然不参与）。根 dependencies 省略或为空时该侧可达集合
-                # 为空，全部安装包进入比较；与根断开的自环和循环保留。
-                # 关系仍只取 dependencies，不解析版本范围，不从其他字段
-                # 补边。校验已在加载时整份完成，可达包的错误同样导致失败。
-                before_reachable = reachable_names(before_root, before_map)
-                after_reachable = reachable_names(after_root, after_map)
-                before_keep = {
-                    name for name in before_map if name not in before_reachable
-                }
-                after_keep = {
-                    name for name in after_map if name not in after_reachable
-                }
-                before_map = {
-                    name: info
-                    for name, info in before_map.items()
-                    if name in before_keep
-                }
-                after_map = {
-                    name: info
-                    for name, info in after_map.items()
-                    if name in after_keep
-                }
+            # 旧、新两侧各自独立按同一套范围规则确定参与比较的条目，
+            # 再交给 diff_items 做两映射比较；范围规则的语义集中在
+            # _diff_scope_names 一处维护，两侧不会漂移。
+            before_map = _diff_scope_map(before_root, before_map, args)
+            after_map = _diff_scope_map(after_root, after_map, args)
             result = diff_items(before_map, after_map)
         elif args.command == "ancestors":
             ancestors = find_ancestors(root_deps, packages_map, args.name)
